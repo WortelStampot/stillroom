@@ -1,6 +1,7 @@
 // Both museums at once: stand-ins for the Art Institute and the Rijksmuseum (search, records, image server).
 const PAGE = process.env.STILLROOM_PAGE || 'file://' + require('path').resolve(__dirname, '../index.html');
-// Rijksmuseum records whose id ends in 7 are "in copyright" and must never be shown. Then the Art Institute
+// Rijksmuseum records whose id ends in 7 are "in copyright" and must never be shown; ids ending in 3, 4 or 5 have a
+// small original (700 px wide) that the image server won't enlarge, so nothing wider may be asked for. Then the Art Institute
 // goes down, and the Rijksmuseum alone should keep the works coming.
 const { chromium } = require('playwright-core'); const fs = require('fs'); const { execFileSync } = require('child_process');
 const cache = {};
@@ -8,14 +9,15 @@ const jpeg = (w, h) => cache[w + 'x' + h] || (cache[w + 'x' + h] = execFileSync(
 import sys,io
 from PIL import Image
 im=Image.new('RGB',(${w},${h}),(90,110,70));b=io.BytesIO();im.save(b,'JPEG');sys.stdout.buffer.write(b.getvalue())`]));
-const RW = 5000, RH = 4000;
+const RW = 5000, RH = 4000, SMALL = 700;
+const dimsOf = img => /[345]$/.test(img) ? [SMALL, 900] : [RW, RH];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 (async () => {
   const b = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium', args: ['--headless=new'], headless: false });
   const p = await (await b.newContext({ viewport: { width: 1280, height: 800 } })).newPage();
   const errs = []; p.on('pageerror', e => errs.push(e.message));
   const osd = fs.readFileSync(__dirname + '/node_modules/openseadragon/build/openseadragon/openseadragon.min.js');
-  let aicDown = false; const asked = { search: [], record: 0, info: 0, tile: 0, image: 0 };
+  let aicDown = false; const asked = { search: [], record: 0, info: 0, tile: 0, image: 0, refused: [] };
   const cors = { 'access-control-allow-origin': '*' };
   await p.route('**/*', async r => {
     const u = r.request().url();
@@ -56,10 +58,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       const m = u.match(/micr\.io\/([^/]+)\/(.*)$/);
       if (m[2] === 'info.json') {
         asked.info++;
-        return r.fulfill({ headers: cors, contentType: 'application/ld+json', body: JSON.stringify({ '@context': 'http://iiif.io/api/image/3/context.json', id: 'https://iiif.micr.io/' + m[1], type: 'ImageService3', protocol: 'http://iiif.io/api/image', profile: 'level2', width: RW, height: RH, tiles: [{ width: 1024, height: 1024, scaleFactors: [1, 2, 4, 8] }] }) });
+        return r.fulfill({ headers: cors, contentType: 'application/ld+json', body: JSON.stringify({ '@context': 'http://iiif.io/api/image/3/context.json', id: 'https://iiif.micr.io/' + m[1], type: 'ImageService3', protocol: 'http://iiif.io/api/image', profile: 'level2', width: dimsOf(m[1])[0], height: dimsOf(m[1])[1], tiles: [{ width: 1024, height: 1024, scaleFactors: [1, 2, 4, 8] }] }) });
       }
       const [region, size] = m[2].split('/');
       if (region === 'full') asked.image++; else asked.tile++;
+      if (region === 'full' && parseInt(size) > dimsOf(m[1])[0]) { asked.refused.push(m[1] + ' ' + size); return r.fulfill({ headers: cors, status: 400, body: 'upscaling not allowed' }); }
       let w = parseInt(size) || 1024; w = Math.min(w, 1700);
       return r.fulfill({ headers: cors, contentType: 'image/jpeg', body: jpeg(w, Math.round(w * 0.8)) });
     }
@@ -83,7 +86,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       await p.keyboard.press('i');
       await p.keyboard.press('k'); kept = true;
       await p.mouse.move(640, 400); for (let k = 0; k < 14; k++) { await p.mouse.wheel(0, -120); await sleep(40); }
-      await sleep(1500); zoomed = asked.info > 0 && asked.tile > 0; await p.keyboard.press('Escape'); await sleep(300);
+      await sleep(1500); zoomed = asked.tile > 0; await p.keyboard.press('Escape'); await sleep(300);
     }
   }
   const log1 = await lines();
@@ -92,7 +95,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const inc = rk.filter(l => /WORK rijks:\d*7 /.test(l));
   console.log('works:', works.length, '· from the Rijksmuseum:', rk.length, '· in-copyright ones shown:', inc.length);
   console.log('label:', label);
-  console.log('zoom on a Rijksmuseum work used info.json and tiles:', zoomed, JSON.stringify({ info: asked.info, tiles: asked.tile }));
+  console.log('zoom on a Rijksmuseum work loaded tiles:', zoomed, JSON.stringify({ info: asked.info, tiles: asked.tile }));
+  const small = rk.filter(l => /WORK rijks:\d*[345] /.test(l));
+  console.log('small originals shown:', small.length, '·', (small[0] || '').slice(14, 100), '· requests refused for being too wide:', asked.refused.length);
   console.log('search asks:', asked.search.slice(0, 3).map(s => `type=${s.get('type')} imageAvailable=${s.get('imageAvailable')} token=${(s.get('pageToken') || '').slice(0, 12)}…`).join(' | '));
   console.log('Rijksmuseum searches / records looked up:', asked.search.length, '/', asked.record);
 

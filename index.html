@@ -342,14 +342,17 @@ body.show-bottom #cue,body.pinned #cue{bottom:72px}
     const shown = j.isShownBy || {};
     const svc = (shown['http://rdfs.org/sioc/services#has_service'] || {}).id || (shown.id || '').replace(/\/full\/.*$/, '');
     if (!svc) { log(`rijksmuseum record ${n} skipped: no image (${ms(t0)})`); return null; }
-    log(`rijksmuseum record ${n} ok (${ms(t0)})`);
+    // The record doesn't give the image's size, and the image server won't enlarge; it describes itself in one small request.
+    let size = null;
+    try { const r = await fetch(svc + '/info.json'); if (r.ok) { const i = await r.json(); if (i.width && i.height) size = { width: i.width, height: i.height }; } } catch (e) {}
+    log(`rijksmuseum record ${n} ok (${ms(t0)})${size ? '' : ', size unknown'}`);
     const ref = rkText(c.identifier);
     return {
       src: 'rijks', id: 'rijks:' + n, iiif: svc.slice(0, svc.lastIndexOf('/')), image_id: svc.slice(svc.lastIndexOf('/') + 1),
       title: rkText(c.title), artist_display: rkList(c.creator).map(rkLabel).filter(Boolean).join(', '),
       date_display: rkText(c.created), medium_display: rkList(c.medium).map(rkLabel).filter(Boolean).join(', '),
       dimensions: rkList(c.extent).filter(x => !x['@language'] || x['@language'] === 'en').map(rkText).join('; '),
-      artwork_type_title: RK_NAMES[k], main_reference_number: ref, is_public_domain: true,
+      artwork_type_title: RK_NAMES[k], main_reference_number: ref, is_public_domain: true, thumbnail: size,
       link: (j.isShownAt && j.isShownAt.id) || (ref ? 'https://www.rijksmuseum.nl/en/search?q=' + encodeURIComponent(ref) : 'https://www.rijksmuseum.nl/')
     };
   }
@@ -479,7 +482,7 @@ body.show-bottom #cue,body.pinned #cue{bottom:72px}
   function addDetail(w) {
     const d = w.d, W = d.thumbnail && d.thumbnail.width, H = d.thumbnail && d.thumbnail.height;
     if (w.detail || d.is_zoomable === false) return;
-    // The Rijksmuseum's records don't give the size, so its image server describes itself (one small request).
+    // The Rijksmuseum's server is IIIF 3; its own description (already fetched once, so cached) sets up the tiles.
     if (d.src === 'rijks') { w.detail = true; addLayer(w, `${d.iiif}/${d.image_id}/info.json`, 'detail tiles (zoomed past 1.4×)'); return; }
     if (!W || !H) return;
     w.detail = true;

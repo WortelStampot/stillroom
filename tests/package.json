@@ -8,7 +8,8 @@
     "failures": "node failtest.js",
     "log": "node logtest.js",
     "soak": "node soak.js",
-    "persist": "node persisttest.js"
+    "persist": "node persisttest.js",
+    "rijks": "node rijkstest.js"
   },
   "dependencies": {
     "openseadragon": "4.1.1",

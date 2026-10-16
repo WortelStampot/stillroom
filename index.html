@@ -273,17 +273,112 @@ body.zoomed #zoomOut{display:inline-block}
       if (got.length) { queue.push(...got.filter(g => !queue.some(x => x.id === g.id))); return; }
     }
   }
+  // Ask both museums; go on as soon as either one has a work ready.
   function fill() {
-    if (!fetching) fetching = fetchBatch().finally(() => { fetching = null; });
-    return fetching;
+    if (!fetching && queue.length < 15) fetching = fetchBatch().finally(() => { fetching = null; });
+    const asks = [fetching || Promise.resolve(), rkFill()];
+    return new Promise((resolve, reject) => {
+      let left = asks.length, err = null;
+      asks.forEach(a => a.catch(e => { err = err || e; }).then(() => {
+        if (queue.length || rkReady.length) resolve();
+        else if (--left === 0) err ? reject(err) : resolve();
+      }));
+    });
   }
+
+  // ---------- fetching from the Rijksmuseum ----------
+  // No key needed. The search returns only ids, 100 at a time in id order; each work's record then
+  // takes one more request, so a few are looked up ahead, one at a time. Only works the museum marks
+  // public domain are kept (its search also finds works still in copyright).
+  const RK_SEARCH = 'https://data.rijksmuseum.nl/search/collection', RK_DATA = 'https://data.rijksmuseum.nl/';
+  const RK_TYPES = { painting: 'schilderij', drawing: 'tekening', print: 'prent' };
+  const RK_NAMES = { painting: 'Painting', drawing: 'Drawing', print: 'Print' };
+  let rkIds = [], rkReady = [], rkBusy = null, rkPauseUntil = 0, rkGen = 0, rkTokens = true;
+
+  // A page token is just the id to start after, so a random one starts at a random stretch of the collection.
+  function rkToken() {
+    const start = '200' + (1 + Math.floor(Math.random() * 9)) + String(Math.floor(Math.random() * 1000)).padStart(3, '0');
+    return btoa('{"token": "https://id.rijksmuseum.nl/' + start + '"}').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  async function rkSearch(g) {
+    const k = state.types[Math.floor(Math.random() * state.types.length)];
+    for (let attempt = 0; attempt < 4; attempt++) {
+      let url = `${RK_SEARCH}?type=${RK_TYPES[k]}&imageAvailable=true`;
+      if (rkTokens && attempt < 3) url += '&pageToken=' + rkToken();
+      let res; const t0 = performance.now();
+      try { res = await fetch(url); } catch (e) { log(`rijksmuseum search failed: no connection (${ms(t0)})`); throw new Error('network'); }
+      if (!res.ok) { log(`rijksmuseum search failed: HTTP ${res.status} (${ms(t0)})`); if (rkTokens) { rkTokens = false; continue; } throw new Error('api'); }
+      const json = await res.json();
+      if (g !== rkGen) return;
+      const ids = (json.orderedItems || []).map(o => o.id && o.id.split('/').pop()).filter(n => n && !seenSet.has('rijks:' + n));
+      log(`rijksmuseum search ok (${ms(t0)}): ${ids.length} new, ${RK_TYPES[k]}`);
+      // neighbouring ids are often one series (a set of prints), so take only a few from each stretch
+      if (ids.length) { rkIds.push(...shuffle(ids).slice(0, 12).map(n => ({ n, k }))); return; }
+    }
+  }
+  // Pull a readable value out of the museum's record: {en, nl}, [{@language, @value}], a plain string, or a list of those.
+  function rkText(v) {
+    if (v == null) return '';
+    if (typeof v === 'string') return v;
+    if (Array.isArray(v)) { const en = v.find(x => x && x['@language'] === 'en'); return rkText(en || v[0]); }
+    if (v['@value'] != null) return String(v['@value']);
+    if (v.en != null || v.nl != null) return rkText(v.en != null ? v.en : v.nl);
+    return '';
+  }
+  const rkLabel = c => rkText(c && c['http://www.w3.org/2004/02/skos/core#prefLabel']);
+  const rkList = v => (Array.isArray(v) ? v : v ? [v] : []);
+  async function rkResolve({ n, k }) {
+    const t0 = performance.now(); let res;
+    try { res = await fetch(`${RK_DATA}${n}?_profile=edm-framed`); } catch (e) { log(`rijksmuseum record ${n} failed: no connection (${ms(t0)})`); throw new Error('network'); }
+    if (!res.ok) { log(`rijksmuseum record ${n} failed: HTTP ${res.status} (${ms(t0)})`); return null; }
+    const j = await res.json(), c = j.aggregatedCHO || {};
+    if (!/publicdomain/.test(j.edmRights || '')) { log(`rijksmuseum record ${n} skipped: not public domain (${ms(t0)})`); return null; }
+    const shown = j.isShownBy || {};
+    const svc = (shown['http://rdfs.org/sioc/services#has_service'] || {}).id || (shown.id || '').replace(/\/full\/.*$/, '');
+    if (!svc) { log(`rijksmuseum record ${n} skipped: no image (${ms(t0)})`); return null; }
+    log(`rijksmuseum record ${n} ok (${ms(t0)})`);
+    const ref = rkText(c.identifier);
+    return {
+      src: 'rijks', id: 'rijks:' + n, iiif: svc.slice(0, svc.lastIndexOf('/')), image_id: svc.slice(svc.lastIndexOf('/') + 1),
+      title: rkText(c.title), artist_display: rkList(c.creator).map(rkLabel).filter(Boolean).join(', '),
+      date_display: rkText(c.created), medium_display: rkList(c.medium).map(rkLabel).filter(Boolean).join(', '),
+      dimensions: rkList(c.extent).filter(x => !x['@language'] || x['@language'] === 'en').map(rkText).join('; '),
+      artwork_type_title: RK_NAMES[k], main_reference_number: ref, is_public_domain: true,
+      link: (j.isShownAt && j.isShownAt.id) || (ref ? 'https://www.rijksmuseum.nl/en/search?q=' + encodeURIComponent(ref) : 'https://www.rijksmuseum.nl/')
+    };
+  }
+  // Keep three Rijksmuseum works looked up ahead. After a failure, leave the museum alone for a minute.
+  function rkFill() {
+    if (rkBusy) return rkBusy;
+    if (rkReady.length >= 3 || Date.now() < rkPauseUntil) return Promise.resolve();
+    const g = rkGen;
+    rkBusy = (async () => {
+      for (let tries = 0; tries < 30 && rkReady.length < 3 && g === rkGen; tries++) {
+        if (!rkIds.length) await rkSearch(g);
+        if (!rkIds.length || g !== rkGen) return;
+        const d = await rkResolve(rkIds.shift());
+        if (d && g === rkGen && !seenSet.has(d.id)) rkReady.push(d);
+      }
+    })().catch(e => { rkPauseUntil = Date.now() + 60000; throw e; }).finally(() => { rkBusy = null; });
+    return rkBusy;
+  }
+  // Which museum the next work comes from: a coin toss, decided one ahead so the next image can preload.
+  let rkTurn = Math.random() < 0.5;
+  const upNext = () => (rkTurn && rkReady.length) || !queue.length ? rkReady[0] : queue[0];
+  function takeNext() {
+    const d = (rkTurn && rkReady.length) || !queue.length ? rkReady.shift() : queue.shift();
+    rkTurn = Math.random() < 0.5;
+    return d;
+  }
+  const museum = d => d.src === 'rijks' ? 'Rijksmuseum' : 'Art Institute of Chicago';
+  const pageOf = d => d.link || 'https://www.artic.edu/artworks/' + d.id;
 
   // ---------- images ----------
   // Never ask for more pixels than the original has: the image server won't enlarge, and refuses instead.
   const natW = d => (d.thumbnail && d.thumbnail.width) || d.w || 0;
   const fit = (d, w) => { const n = natW(d); return n && n < w ? n : w; };
-  const full = (d, w) => `${iiif}/${d.image_id}/full/${fit(d, w)},/0/default.jpg`;
-  const native = d => `${iiif}/${d.image_id}/full/full/0/default.jpg`;
+  const full = (d, w) => `${d.iiif || iiif}/${d.image_id}/full/${fit(d, w)},/0/default.jpg`;
+  const native = d => `${d.iiif || iiif}/${d.image_id}/full/${d.src === 'rijks' ? 'max' : 'full'}/0/default.jpg`;   // IIIF 3 says max
   function setSrc(img, urls, onFail) {
     let i = 0;
     img.onerror = () => { i++; if (i < urls.length) img.src = urls[i]; else if (onFail) onFail(); };
@@ -377,7 +472,10 @@ body.zoomed #zoomOut{display:inline-block}
   }
   function addDetail(w) {
     const d = w.d, W = d.thumbnail && d.thumbnail.width, H = d.thumbnail && d.thumbnail.height;
-    if (w.detail || !W || !H || d.is_zoomable === false) return;
+    if (w.detail || d.is_zoomable === false) return;
+    // The Rijksmuseum's records don't give the size, so its image server describes itself (one small request).
+    if (d.src === 'rijks') { w.detail = true; addLayer(w, `${d.iiif}/${d.image_id}/info.json`, 'detail tiles (zoomed past 1.4×)'); return; }
+    if (!W || !H) return;
     w.detail = true;
     let n = 0; while (Math.max(W, H) / Math.pow(2, n) > 512 && n < 10) n++;
     addLayer(w, {
@@ -434,11 +532,11 @@ body.zoomed #zoomOut{display:inline-block}
     // Start fresh: drop queued requests for the last work, then open this one.
     gen++;
     work = { gen, d, shown: false, sharp: false, detail: false, tries: 0, t0: performance.now() };
-    log(`WORK ${d.id} · image ${d.image_id} · original ${natW(d) || '?'}×${(d.thumbnail && d.thumbnail.height) || '?'} · ${d.artwork_type_title || '?'} · #${++workCount} this session`);
+    log(`WORK ${d.id} · ${museum(d)} · image ${d.image_id} · original ${natW(d) || '?'}×${(d.thumbnail && d.thumbnail.height) || '?'} · ${d.artwork_type_title || '?'} · #${++workCount} this session`);
     if (viewer.imageLoader && viewer.imageLoader.clear) viewer.imageLoader.clear();
     openBase(work);
 
-    const upcoming = history[pos + 1] || queue[0];
+    const upcoming = history[pos + 1] || upNext();
     if (upcoming && upcoming.image_id) { const im = new Image(); im.src = full(upcoming, 843); }
   }
 
@@ -468,7 +566,7 @@ body.zoomed #zoomOut{display:inline-block}
     clearTimeout(stallT);
     if (w.tries <= 2) { showStatus('Trying that one again…'); setTimeout(() => { if (w.gen === gen) openBase(w); }, 1000); return; }
     // Give up on this one: say which work it was (so it can be looked up), then move on.
-    showStatus(`This one wouldn’t load (Art Institute no. ${w.d.id}). Moving on…`);
+    showStatus(`This one wouldn’t load (${museum(w.d)} no. ${w.d.main_reference_number || w.d.id}). Moving on…`);
     log(`  GAVE UP on work ${w.d.id} after ${ms(w.t0)}, skipping`);
     w.failed = true;
     setTimeout(() => { if (w.gen === gen) { history.splice(pos, 1); pos--; next(); } }, 2200);
@@ -476,19 +574,19 @@ body.zoomed #zoomOut{display:inline-block}
 
   async function next() {
     if (pos < history.length - 1) { pos++; render(); return; }
-    if (!queue.length) {
+    if (!queue.length && !rkReady.length) {
       if (!current()) showStatus('Hanging the first one…'); else showStatus('Hanging the next one…');
       art.classList.remove('shown');
       try { await fill(); } catch (e) {
-        showStatus("Couldn't reach the Art Institute of Chicago's collection. Check your connection, then press → to try again.");
+        showStatus("Couldn't reach either museum's collection. Check your connection, then press → to try again.");
         return;
       }
-      if (!queue.length) { showStatus('Nothing new turned up with these filters. Try turning another medium on.'); return; }
+      if (!queue.length && !rkReady.length) { showStatus('Nothing new turned up with these filters. Try turning another medium on.'); return; }
     }
-    history.push(queue.shift()); pos = history.length - 1;
+    history.push(takeNext()); pos = history.length - 1;
     if (history.length > 300) { history.shift(); pos--; }
     render();
-    if (queue.length < 15) fill().catch(() => {});
+    if (queue.length < 15 || rkReady.length < 3) fill().catch(() => {});
   }
   function prev() { if (pos > 0) { pos--; log('← back'); render(); } }
 
@@ -503,6 +601,7 @@ body.zoomed #zoomOut{display:inline-block}
         date: d.date_display || '', medium: d.medium_display || '', type: d.artwork_type_title || '',
         dimensions: d.dimensions || '', ref: d.main_reference_number || '',
         w: d.thumbnail && d.thumbnail.width, h: d.thumbnail && d.thumbnail.height,
+        ...(d.src ? { src: d.src, iiif: d.iiif, link: d.link } : {}),
         keptAt: new Date().toISOString()
       });
       toast('Kept');
@@ -522,8 +621,8 @@ body.zoomed #zoomOut{display:inline-block}
     add('meta', d.medium_display || d.medium);
     add('meta', d.dimensions);
     const credit = document.createElement('div'); credit.className = 'credit';
-    credit.append('Art Institute of Chicago' + ((d.main_reference_number || d.ref) ? ', ' + (d.main_reference_number || d.ref) : '') + ' · ');
-    const a = document.createElement('a'); a.href = 'https://www.artic.edu/artworks/' + d.id; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'Open on their site';
+    credit.append(museum(d) + ((d.main_reference_number || d.ref) ? ', ' + (d.main_reference_number || d.ref) : '') + ' · ');
+    const a = document.createElement('a'); a.href = pageOf(d); a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'Open on their site';
     credit.appendChild(a); el.appendChild(credit);
   }
   function toggleLabel() {
@@ -540,7 +639,7 @@ body.zoomed #zoomOut{display:inline-block}
     state.types = on ? state.types.filter(t => t !== k) : [...state.types, k];
     save(); syncFilters();
     log(`filters now: ${state.types.join(', ')}`);
-    queue = []; strategy = 0; pageNo = 0; total = null; seed = Math.floor(Math.random() * 1e9);
+    queue = []; rkIds = []; rkReady = []; rkGen++; rkPauseUntil = 0; strategy = 0; pageNo = 0; total = null; seed = Math.floor(Math.random() * 1e9);
     history = history.slice(0, pos + 1);
     next();
   }
@@ -561,13 +660,13 @@ body.zoomed #zoomOut{display:inline-block}
         closePile();
         const d = { id: k.id, image_id: k.image_id, title: k.title, artist_display: k.artist, date_display: k.date,
           medium_display: k.medium, artwork_type_title: k.type, dimensions: k.dimensions, main_reference_number: k.ref,
-          thumbnail: k.w ? { width: k.w, height: k.h } : null, is_public_domain: true };
+          thumbnail: k.w ? { width: k.w, height: k.h } : null, is_public_domain: true, src: k.src, iiif: k.iiif, link: k.link };
         history = history.slice(0, pos + 1); history.push(d); pos = history.length - 1; render();
       };
       const artist = document.createElement('div'); artist.className = 'artist'; artist.textContent = (k.artist || 'Artist unknown').split('\n')[0];
       const title = document.createElement('div'); title.className = 'title'; title.textContent = [k.title, k.date].filter(Boolean).join(', ');
       const row = document.createElement('div'); row.className = 'row';
-      const a = document.createElement('a'); a.href = 'https://www.artic.edu/artworks/' + k.id; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'Their page';
+      const a = document.createElement('a'); a.href = pageOf(k); a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'Their page';
       const rm = document.createElement('button'); rm.textContent = 'Remove';
       rm.onclick = () => { state.kept = state.kept.filter(x => x.id !== k.id); save(); updateCount(); renderPile(); };
       row.append(a, rm);

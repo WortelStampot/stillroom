@@ -18,7 +18,7 @@ Each page carries the branch, commit and time it was published; the session log 
 ## Keys
 
 → / Space next · ← back · K keep · I label · scroll or pinch to zoom · drag to move · G glide ·
-Esc or 0 whole work · P kept pile · F full screen · H keep controls showing · D save session log
+Esc or 0 whole work · P kept pile · F full screen · H keep controls showing · D save session log (every session since the last D)
 
 ## Images and data
 

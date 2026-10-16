@@ -166,20 +166,37 @@ body.zoomed #zoomOut{display:inline-block}
   const KEY = ENV === 'dev' ? 'stillroom.dev.v1' : 'stillroom.v1';
   if (ENV === 'dev') { document.title = 'Stillroom (dev)'; document.querySelector('.wordmark').textContent = 'Stillroom · dev'; }
 
-  // ---------- session log: always on, kept in memory only, saved with D ----------
-  // The last 600 lines, each stamped with the clock time so it lines up with a screen recording.
-  const LOG = [], LOG_MAX = 600;
+  // ---------- session log: always on, kept in this browser, saved with D ----------
+  // Each line is stamped with the clock time so it lines up with a screen recording.
+  // The log is stored next to the pile (its own key, so dev keeps its own), so closing the tab loses nothing.
+  // D saves every session since the last D and starts the stored log afresh. Past 5000 lines the oldest go.
+  const LOG_KEY = KEY + '.log', LOG_MAX = 5000;
+  const LOG = (() => { try { const l = JSON.parse(localStorage.getItem(LOG_KEY)); if (Array.isArray(l)) return l; } catch (e) {} return []; })();
   const pad = (n, w = 2) => String(n).padStart(w, '0');
+  let logTimer = 0;
+  function storeLog() {
+    clearTimeout(logTimer); logTimer = 0;
+    try { localStorage.setItem(LOG_KEY, JSON.stringify(LOG)); }
+    catch (e) { // storage full: drop the older half rather than stop logging
+      LOG.splice(0, LOG.length >> 1, '(older lines dropped: browser storage full)');
+      try { localStorage.setItem(LOG_KEY, JSON.stringify(LOG)); } catch (e2) {}
+    }
+  }
   function log(msg) {
     const t = new Date();
     LOG.push(`${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())}.${pad(t.getMilliseconds(), 3)}  ${msg}`);
     if (LOG.length > LOG_MAX) LOG.splice(0, LOG.length - LOG_MAX);
+    if (!logTimer) logTimer = setTimeout(storeLog, 1000);
   }
+  addEventListener('pagehide', storeLog);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) storeLog(); });
   const ms = t0 => Math.round(performance.now() - t0) + 'ms';
   const sizeOf = u => ((u.match(/\/full\/([^/]+)\//) || [])[1] || '?').replace(/,$/, 'px');
   window.addEventListener('error', e => log(`SCRIPT ERROR ${e.message} (${(e.filename || '').split('/').pop()}:${e.lineno})`));
   window.addEventListener('unhandledrejection', e => log(`SCRIPT ERROR (promise) ${e.reason && e.reason.message || e.reason}`));
-  log(`session start · ${ENV} · build ${BUILD.startsWith('__') ? 'unstamped' : BUILD} · ${navigator.userAgent} · window ${innerWidth}×${innerHeight} @${devicePixelRatio}x`);
+  const today = () => { const t = new Date(); return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`; };
+  const sessionLine = word => log(`session ${word} · ${today()} · ${ENV} · build ${BUILD.startsWith('__') ? 'unstamped' : BUILD} · ${navigator.userAgent} · window ${innerWidth}×${innerHeight} @${devicePixelRatio}x`);
+  sessionLine('start');
   function saveLog() {
     log('log saved');
     const t = new Date(), stamp = `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}-${pad(t.getHours())}${pad(t.getMinutes())}${pad(t.getSeconds())}`;
@@ -188,7 +205,9 @@ body.zoomed #zoomOut{display:inline-block}
     a.download = `stillroom-log-${stamp}.txt`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-    toast('Log saved');
+    const sessions = LOG.filter(l => l.includes('  session start · ')).length;
+    LOG.length = 0; sessionLine('continues'); storeLog();
+    toast(sessions > 1 ? `Log saved (${sessions} sessions)` : 'Log saved');
   }
   const $ = id => document.getElementById(id);
 

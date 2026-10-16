@@ -51,6 +51,7 @@ body.show-top #top,body.show-bottom #bottom,body.pinned .chrome,.chrome:focus-wi
 #top{top:0;justify-content:space-between}
 #bottom{bottom:0;justify-content:center}
 .group{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.sep{width:1px;align-self:stretch;background:var(--line);margin:0 4px}
 .wordmark{font:italic 18px/1 var(--serif);letter-spacing:.01em;color:var(--ink-dim);margin-right:6px}
 #keepBtn[aria-pressed="true"]{border-color:var(--gilt);color:var(--gilt);background:transparent}
 #zoomOut{display:none}
@@ -107,6 +108,10 @@ body.show-bottom #cue,body.pinned #cue{bottom:72px}
     <button id="t-painting" data-type="painting">Paintings</button>
     <button id="t-drawing" data-type="drawing">Drawings &amp; watercolors</button>
     <button id="t-print" data-type="print">Prints</button>
+    <span class="sep" aria-hidden="true"></span>
+    <button id="m-aic" title="Only the Art Institute of Chicago">Art Institute</button>
+    <button id="m-rijks" title="Only the Rijksmuseum">Rijksmuseum</button>
+    <button id="m-both" title="Both museums, mixed">Both</button>
   </div>
   <div class="group">
     <button id="keysBtn" title="Every key (?)">?</button>
@@ -225,6 +230,7 @@ body.show-bottom #cue,body.pinned #cue{bottom:72px}
   const state = loadState();
   if (!Array.isArray(state.seen)) state.seen = [];
   if (!Array.isArray(state.types) || !state.types.length) state.types = ['painting', 'drawing', 'print'];
+  if (!['aic', 'rijks', 'both'].includes(state.museum)) state.museum = 'both';
   function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
   const seenSet = new Set(state.seen);
   function markSeen(id) {
@@ -281,12 +287,12 @@ body.show-bottom #cue,body.pinned #cue{bottom:72px}
   }
   // Ask both museums; go on as soon as either one has a work ready.
   function fill() {
-    if (!fetching && queue.length < 15) fetching = fetchBatch().finally(() => { fetching = null; });
-    const asks = [fetching || Promise.resolve(), rkFill()];
+    if (!fetching && state.museum !== 'rijks' && queue.length < 15) fetching = fetchBatch().finally(() => { fetching = null; });
+    const asks = [fetching || Promise.resolve(), state.museum !== 'aic' ? rkFill() : Promise.resolve()];
     return new Promise((resolve, reject) => {
       let left = asks.length, err = null;
       asks.forEach(a => a.catch(e => { err = err || e; }).then(() => {
-        if (queue.length || rkReady.length) resolve();
+        if (ready()) resolve();
         else if (--left === 0) err ? reject(err) : resolve();
       }));
     });
@@ -359,7 +365,7 @@ body.show-bottom #cue,body.pinned #cue{bottom:72px}
   // Keep three Rijksmuseum works looked up ahead. After a failure, leave the museum alone for a minute.
   function rkFill() {
     if (rkBusy) return rkBusy;
-    if (rkReady.length >= 3 || Date.now() < rkPauseUntil) return Promise.resolve();
+    if (rkReady.length >= 3 || (Date.now() < rkPauseUntil && state.museum === 'both')) return Promise.resolve();
     const g = rkGen;
     rkBusy = (async () => {
       for (let tries = 0; tries < 30 && rkReady.length < 3 && g === rkGen; tries++) {
@@ -371,11 +377,14 @@ body.show-bottom #cue,body.pinned #cue{bottom:72px}
     })().catch(e => { rkPauseUntil = Date.now() + 60000; throw e; }).finally(() => { rkBusy = null; });
     return rkBusy;
   }
-  // Which museum the next work comes from: a coin toss, decided one ahead so the next image can preload.
+  // Which museum the next work comes from: one chosen in the top bar, or with Both a coin toss,
+  // decided one ahead so the next image can preload.
   let rkTurn = Math.random() < 0.5;
-  const upNext = () => (rkTurn && rkReady.length) || !queue.length ? rkReady[0] : queue[0];
+  const ready = () => state.museum === 'rijks' ? rkReady.length : state.museum === 'aic' ? queue.length : queue.length + rkReady.length;
+  const fromRk = () => state.museum === 'rijks' || (state.museum === 'both' && rkReady.length > 0 && (rkTurn || !queue.length));
+  const upNext = () => fromRk() ? rkReady[0] : queue[0];
   function takeNext() {
-    const d = (rkTurn && rkReady.length) || !queue.length ? rkReady.shift() : queue.shift();
+    const d = fromRk() ? rkReady.shift() : queue.shift();
     rkTurn = Math.random() < 0.5;
     return d;
   }
@@ -584,14 +593,15 @@ body.show-bottom #cue,body.pinned #cue{bottom:72px}
 
   async function next() {
     if (pos < history.length - 1) { pos++; render(); return; }
-    if (!queue.length && !rkReady.length) {
+    if (!ready()) {
       if (!current()) showStatus('Hanging the first one…'); else showStatus('Hanging the next one…');
       art.classList.remove('shown');
       try { await fill(); } catch (e) {
-        showStatus("Couldn't reach either museum's collection. Check your connection, then press → to try again.");
+        const which = { aic: "the Art Institute of Chicago's collection", rijks: "the Rijksmuseum's collection", both: "either museum's collection" }[state.museum];
+        showStatus(`Couldn't reach ${which}. Check your connection, then press → to try again.`);
         return;
       }
-      if (!queue.length && !rkReady.length) { showStatus('Nothing new turned up with these filters. Try turning another medium on.'); return; }
+      if (!ready()) { showStatus('Nothing new turned up with these filters. Try turning another medium on.'); return; }
     }
     history.push(takeNext()); pos = history.length - 1;
     if (history.length > 300) { history.shift(); pos--; }
@@ -650,9 +660,20 @@ body.show-bottom #cue,body.pinned #cue{bottom:72px}
     state.types = on ? state.types.filter(t => t !== k) : [...state.types, k];
     save(); syncFilters();
     log(`filters now: ${state.types.join(', ')}`);
+    restart();
+  }
+  // Start the stream afresh after a filter or museum change; what was already seen stays in history.
+  function restart() {
     queue = []; rkIds = []; rkReady = []; rkGen++; rkPauseUntil = 0; strategy = 0; pageNo = 0; total = null; seed = Math.floor(Math.random() * 1e9);
     history = history.slice(0, pos + 1);
     next();
+  }
+  function syncMuseum() { ['aic', 'rijks', 'both'].forEach(m => $('m-' + m).setAttribute('aria-pressed', String(state.museum === m))); }
+  function setMuseum(m) {
+    if (state.museum === m) return;
+    state.museum = m; save(); syncMuseum();
+    log(`museum now: ${m}`);
+    restart();
   }
 
   // ---------- pile ----------
@@ -754,6 +775,7 @@ body.show-bottom #cue,body.pinned #cue{bottom:72px}
   $('glideBtn').onclick = () => setGlide(!state.glide);
   $('pileBtn').onclick = openPile; $('pileClose').onclick = closePile;
   Object.keys(TYPES).forEach(k => { $('t-' + k).onclick = () => toggleType(k); });
+  ['aic', 'rijks', 'both'].forEach(m => { $('m-' + m).onclick = () => setMuseum(m); });
   $('fsBtn').onclick = () => {
     const p = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
     if (p && p.catch) p.catch(() => {});
@@ -810,7 +832,7 @@ body.show-bottom #cue,body.pinned #cue{bottom:72px}
   function togglePinned() { state.pinned = !document.body.classList.contains('pinned'); document.body.classList.toggle('pinned', state.pinned); save(); }
   document.body.classList.toggle('pinned', !!state.pinned);
 
-  syncFilters(); updateCount(); wake(); setGlide(state.glide);
+  syncFilters(); syncMuseum(); updateCount(); wake(); setGlide(state.glide);
   next();
 })();
 </script>

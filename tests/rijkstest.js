@@ -80,7 +80,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   for (let i = 0; i < 20; i++) {
     if (i) { await p.keyboard.press('ArrowRight'); await sleep(700); }
     const w = await lastWork();
-    if (!kept && w.includes('Rijksmuseum')) {
+    if (!kept && w.includes('Rijksmuseum') && !/WORK rijks:\d*[345] /.test(w)) {   // a large original, so zooming reaches the tiles
       await p.keyboard.press('i'); await sleep(200);
       label = await p.evaluate(() => document.getElementById('label').innerText.replace(/\n/g, ' | ') + ' → ' + document.querySelector('#label a').href);
       await p.keyboard.press('i');
@@ -110,6 +110,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   });
   console.log('pile:', JSON.stringify(pile));
   await p.keyboard.press('Escape');
+
+  // the museum buttons: only one museum, then the other, then both again
+  for (const m of ['rijks', 'aic', 'both']) {
+    const before = (await lines()).length;
+    await p.mouse.move(640, 5); await sleep(300);
+    await p.click('#m-' + m); await sleep(1200);
+    for (let i = 0; i < 6; i++) { await p.keyboard.press('ArrowRight'); await sleep(600); }
+    const ws = (await lines()).slice(before).filter(l => l.includes('  WORK '));
+    const rkCount = ws.filter(l => l.includes('Rijksmuseum')).length;
+    const pressed = await p.evaluate(() => ['aic', 'rijks', 'both'].filter(k => document.getElementById('m-' + k).getAttribute('aria-pressed') === 'true').join());
+    console.log(`museum ${m}: ${ws.length} works, ${rkCount} from the Rijksmuseum · pressed: ${pressed} · stored: ${await p.evaluate(() => JSON.parse(localStorage.getItem('stillroom.v1')).museum)}`);
+  }
 
   // Art Institute down: works should keep coming from the Rijksmuseum alone
   aicDown = true;

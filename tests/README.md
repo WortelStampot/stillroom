@@ -10,7 +10,7 @@ Python 3 with Pillow makes the stand-in images; Chromium comes from `CHROMIUM` (
     npm run log        # browse, zoom, press D: prints the saved session log
     npm run persist    # the log survives closing the tab; D saves every session since the last D
     npm run zoom       # zoom, Glide and the fallback when tiles fail; writes screenshots here
-    npm run rijks      # both museums: the mix, no in-copyright works, label, pile, zoom; then the Art Institute down
+    npm run rijks      # both museums: the mix, no in-copyright works, label, pile, zoom, the museum buttons; then the Art Institute down
     npm run intro      # a fresh browser gets one short line at a time; someone who saw the old key box gets none
     npm run soak       # 40 works with zooming on a slow server: time to appear, requests in flight, memory
 

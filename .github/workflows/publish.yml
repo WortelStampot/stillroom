@@ -1,0 +1,40 @@
+# Publishes both versions of Stillroom whenever main or dev changes:
+#   main -> https://wortelstampot.github.io/stillroom/       (live)
+#   dev  -> https://wortelstampot.github.io/stillroom/dev/   (try things here first)
+# The assembled site goes to the gh-pages branch, which GitHub Pages serves.
+name: Publish
+on:
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: publish
+  cancel-in-progress: true
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: main, path: live }
+      - uses: actions/checkout@v4
+        with: { ref: dev, path: dev }
+      - name: Assemble the site
+        run: |
+          mkdir -p _site/dev
+          stamp() {  # write the branch, commit and time into the page, so the session log says which build it was
+            sed "s/__BUILD__/$1 $(git -C "$2" rev-parse --short HEAD) $(date -u +%Y-%m-%dT%H:%MZ)/" "$2/index.html"
+          }
+          stamp main live > _site/index.html
+          stamp dev dev > _site/dev/index.html
+          touch _site/.nojekyll
+      - name: Push to gh-pages
+        run: |
+          cd _site
+          git init -q -b gh-pages
+          git config user.name "stillroom-publish"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -qm "Publish main@$(git -C ../live rev-parse --short HEAD) dev@$(git -C ../dev rev-parse --short HEAD)"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" gh-pages

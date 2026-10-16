@@ -318,8 +318,8 @@ body.show-bottom #cue,body.pinned #cue{bottom:72px}
       if (g !== rkGen) return;
       const ids = (json.orderedItems || []).map(o => o.id && o.id.split('/').pop()).filter(n => n && !seenSet.has('rijks:' + n));
       log(`rijksmuseum search ok (${ms(t0)}): ${ids.length} new, ${RK_TYPES[k]}`);
-      // neighbouring ids are often one series (a set of prints), so take only a few from each stretch
-      if (ids.length) { rkIds.push(...shuffle(ids).slice(0, 12).map(n => ({ n, k }))); return; }
+      // neighbouring ids are often one series (an album of prints), so take only four from each stretch
+      if (ids.length) { rkIds.push(...shuffle(ids).slice(0, 4).map(n => ({ n, k }))); return; }
     }
   }
   // Pull a readable value out of the museum's record: {en, nl}, [{@language, @value}], a plain string, or a list of those.

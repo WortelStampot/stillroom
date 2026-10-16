@@ -69,6 +69,10 @@ body.zoomed #zoomOut{display:inline-block}
 #hint{position:fixed;left:50%;bottom:64px;transform:translateX(-50%);background:var(--wall-2);border:1px solid var(--line);padding:14px 16px;max-width:calc(100% - 32px);width:520px;z-index:6;color:var(--ink-dim)}
 #hint p{margin:0 0 8px}
 #hint .keys{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;align-items:center;margin-bottom:10px}
+/* The intro: one short line at a time, each at the moment it's useful. */
+#cue{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);font:italic 16px var(--serif);color:var(--ink-dim);opacity:0;transition:opacity .6s ease;pointer-events:none;z-index:4;white-space:nowrap}
+#cue.on{opacity:1}
+body.show-bottom #cue,body.pinned #cue{bottom:72px}
 
 /* pile */
 #pile{position:fixed;inset:0;background:var(--wall);z-index:10;overflow:auto;padding-block:20px 40px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
@@ -105,6 +109,7 @@ body.zoomed #zoomOut{display:inline-block}
     <button id="t-print" data-type="print">Prints</button>
   </div>
   <div class="group">
+    <button id="keysBtn" title="Every key (?)">?</button>
     <button id="pileBtn">Kept pile (<span id="pileCount">0</span>)</button>
     <button id="fsBtn" title="Full screen (F)">Full screen</button>
   </div>
@@ -121,9 +126,10 @@ body.zoomed #zoomOut{display:inline-block}
 
 <div id="label" hidden></div>
 <div id="toast">Kept</div>
+<div id="cue" aria-live="polite"></div>
 
 <div id="hint" hidden>
-  <p>One work at a time, with no name attached. Notice whether it does anything to you before you look anything up.</p>
+  <p>Every key, for when you want one. <kbd>?</kbd> opens and closes this.</p>
   <div class="keys">
     <span><kbd>→</kbd> <kbd>Space</kbd></span><span>next</span>
     <span><kbd>K</kbd></span><span>keep it (press again to un-keep)</span>
@@ -136,7 +142,7 @@ body.zoomed #zoomOut{display:inline-block}
     <span><kbd>D</kbd></span><span>save a log of this session, to send along with a screen recording when something goes wrong</span>
     <span><kbd>edge</kbd> <kbd>H</kbd></span><span>controls stay hidden: move the cursor to the top or bottom edge to bring them in, or press H to keep them showing</span>
   </div>
-  <button id="hintClose">Start looking</button>
+  <button id="hintClose">Close</button>
 </div>
 
 <section id="pile" hidden aria-label="Kept pile">
@@ -425,7 +431,7 @@ body.zoomed #zoomOut{display:inline-block}
       if (!work || work.shown || viewer.world.getIndexOfItem(e.tiledImage) === -1) return;
       work.shown = true; clearTimeout(stallT);
       log(`  shown after ${ms(work.t0)} (try ${work.tries + 1})`);
-      art.classList.add('shown'); showStatus('');
+      art.classList.add('shown'); showStatus(''); cueOnWork();
       addSharp(work);
     });
     viewer.addHandler('zoom', updateZoomState);
@@ -490,6 +496,7 @@ body.zoomed #zoomOut{display:inline-block}
     if (!viewer || !viewer.world.getItemCount()) return;
     const vp = viewer.viewport, ratio = vp.getZoom() / vp.getHomeZoom();
     document.body.classList.toggle('zoomed', ratio > 1.04);
+    if (ratio > 1.4) { cueDid('zoom'); cueOnZoom(); }
     if (work && work.shown && ratio > 1.4) addDetail(work);
   }
   function goHome() { if (viewer) viewer.viewport.goHome(); }
@@ -606,6 +613,7 @@ body.zoomed #zoomOut{display:inline-block}
       });
       toast('Kept');
     }
+    cueDid('keep');
     save(); updateCount();
     $('keepBtn').setAttribute('aria-pressed', String(isKept(d.id)));
     $('keepBtn').textContent = isKept(d.id) ? 'Kept' : 'Keep';
@@ -695,9 +703,51 @@ body.zoomed #zoomOut{display:inline-block}
     e.target.value = '';
   };
 
+  // ---------- intro: one line at a time ----------
+  // Each line waits for its moment, fades on its own, and retires once acted on or seen on 3 works.
+  const CUES = [
+    { k: 'next', html: '<kbd>→</kbd> for the next one' },
+    { k: 'keep', html: '<kbd>K</kbd> keeps one that holds you' },
+    { k: 'zoom', html: 'Scroll to go closer' },
+    { k: 'back', html: 'Drag to move · <kbd>Esc</kbd> for the whole work', onZoom: true },
+    { k: 'edges', html: 'Controls wait at the top and bottom edges · <kbd>?</kbd> for every key' }
+  ];
+  if (/[?&]intro\b/.test(location.search)) state.cues = {};
+  if (!state.cues) state.cues = state.hintedEdges ? { done: true } : {};
+  let cueT, cueShowT, cueNow = null, cueOnce = -1;
+  function cueSeen(k) { return state.cues.done || (state.cues[k] || 0) >= 3; }
+  function cueDid(k) {
+    if (state.cues.done || state.cues[k] === 9) return;
+    state.cues[k] = 9;
+    if (CUES.every(c => cueSeen(c.k))) state.cues.done = true;
+    save();
+    if (cueNow === k) cueHide();
+  }
+  function cueHide() { clearTimeout(cueT); $('cue').classList.remove('on'); cueNow = null; }
+  function cueShow(c) {
+    state.cues[c.k] = (state.cues[c.k] || 0) + 1; save();
+    cueNow = c.k; $('cue').innerHTML = c.html; $('cue').classList.add('on');
+    log(`  intro line: ${c.k}`);
+    clearTimeout(cueT); cueT = setTimeout(cueHide, 6000);
+  }
+  function cueOnWork() {
+    cueHide(); clearTimeout(cueShowT);
+    const c = CUES.find(c => !c.onZoom && !cueSeen(c.k));
+    if (!c) return;
+    const g = gen;
+    cueShowT = setTimeout(() => {
+      if (g !== gen || !pile.hidden || !$('hint').hidden || document.body.classList.contains('zoomed')) return;
+      cueShow(c);
+    }, 2500);
+  }
+  function cueOnZoom() {
+    const c = CUES.find(c => c.onZoom && !cueSeen(c.k));
+    if (c && cueOnce !== gen) { cueOnce = gen; clearTimeout(cueShowT); cueShow(c); }
+  }
+
   // ---------- controls ----------
-  $('nextBtn').onclick = next; $('prevBtn').onclick = prev; $('keepBtn').onclick = toggleKeep;
-  $('infoBtn').onclick = toggleLabel; $('zoomOut').onclick = goHome;
+  $('nextBtn').onclick = () => { cueDid('next'); next(); }; $('prevBtn').onclick = prev; $('keepBtn').onclick = toggleKeep;
+  $('infoBtn').onclick = toggleLabel; $('zoomOut').onclick = () => { cueDid('back'); goHome(); };
   $('glideBtn').onclick = () => setGlide(!state.glide);
   $('pileBtn').onclick = openPile; $('pileClose').onclick = closePile;
   Object.keys(TYPES).forEach(k => { $('t-' + k).onclick = () => toggleType(k); });
@@ -705,22 +755,24 @@ body.zoomed #zoomOut{display:inline-block}
     const p = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
     if (p && p.catch) p.catch(() => {});
   };
-  $('hintClose').onclick = () => { $('hint').hidden = true; state.hinted = true; state.hintedZoom = true; state.hintedEdges = true; save(); };
+  $('hintClose').onclick = () => { $('hint').hidden = true; };
+  $('keysBtn').onclick = () => { $('hint').hidden = !$('hint').hidden; if (!$('hint').hidden) cueDid('edges'); };
 
   document.addEventListener('keydown', e => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.target && e.target.tagName === 'INPUT') return;
     if (!pile.hidden) { if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') closePile(); return; }
+    if (e.key === '?') { $('keysBtn').click(); return; }
     if (!$('hint').hidden && (e.key === 'Enter' || e.key === 'Escape')) { $('hintClose').click(); return; }
     switch (e.key) {
-      case 'ArrowRight': case ' ': e.preventDefault(); next(); break;
+      case 'ArrowRight': case ' ': e.preventDefault(); cueDid('next'); next(); break;
       case 'ArrowLeft': prev(); break;
       case 'k': case 'K': case 'ArrowUp': e.preventDefault(); toggleKeep(); break;
       case 'i': case 'I': toggleLabel(); break;
       case 'p': case 'P': openPile(); break;
       case 'f': case 'F': $('fsBtn').click(); break;
-      case 'Escape': if (!label.hidden) toggleLabel(); else goHome(); break;
-      case '0': goHome(); break;
+      case 'Escape': if (!label.hidden) toggleLabel(); else { cueDid('back'); goHome(); } break;
+      case '0': cueDid('back'); goHome(); break;
       case 'g': case 'G': setGlide(!state.glide); break;
       case 'h': case 'H': togglePinned(); break;
       case 'd': case 'D': saveLog(); break;
@@ -737,7 +789,7 @@ body.zoomed #zoomOut{display:inline-block}
   function reveal(which, on) {
     const cls = 'show-' + which, b = document.body;
     clearTimeout(hideT[which]);
-    if (on) b.classList.add(cls);
+    if (on) { b.classList.add(cls); cueDid('edges'); }
     else if (b.classList.contains(cls)) hideT[which] = setTimeout(() => b.classList.remove(cls), 450);
   }
   document.addEventListener('mousemove', e => {
@@ -756,7 +808,6 @@ body.zoomed #zoomOut{display:inline-block}
   document.body.classList.toggle('pinned', !!state.pinned);
 
   syncFilters(); updateCount(); wake(); setGlide(state.glide);
-  if (!state.hintedEdges) $('hint').hidden = false;
   next();
 })();
 </script>

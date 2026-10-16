@@ -11,6 +11,7 @@ Python 3 with Pillow makes the stand-in images; Chromium comes from `CHROMIUM` (
     npm run persist    # the log survives closing the tab; D saves every session since the last D
     npm run zoom       # zoom, Glide and the fallback when tiles fail; writes screenshots here
     npm run rijks      # both museums: the mix, no in-copyright works, label, pile, zoom; then the Art Institute down
+    npm run intro      # a fresh browser gets one short line at a time; someone who saw the old key box gets none
     npm run soak       # 40 works with zooming on a slow server: time to appear, requests in flight, memory
 
 Expected from the Oct 16, 2026 build: soak shows 0 stuck, at most 5 requests in flight, works appearing in about 0.35 s.

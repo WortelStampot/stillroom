@@ -235,10 +235,11 @@ body.show-bottom #cue,body.pinned #cue{bottom:72px}
   if (!['aic', 'rijks', 'both'].includes(state.museum)) state.museum = 'both';
   function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
   const seenSet = new Set(state.seen);
+  { const rk = state.seen.filter(id => String(id).startsWith('rijks:')).length; log(`seen list: ${state.seen.length} works (Art Institute ${state.seen.length - rk}, Rijksmuseum ${rk})`); }   // if this ever shrinks between visits, the list was lost or overwritten
   function markSeen(id) {
     if (seenSet.has(id)) return;
     seenSet.add(id); state.seen.push(id);
-    if (state.seen.length > 8000) { const drop = state.seen.splice(0, 1000); drop.forEach(d => seenSet.delete(d)); }
+    if (state.seen.length > 8000) { const drop = state.seen.splice(0, 1000); drop.forEach(d => seenSet.delete(d)); log('seen list full: oldest 1000 dropped'); }
     save();
   }
   const isKept = id => state.kept.some(k => k.id === id);

@@ -30,7 +30,10 @@ b=io.BytesIO();im.save(b,'JPEG');sys.stdout.buffer.write(b.getvalue())`]);}
  await p.waitForTimeout(3000); console.log('after a moment:', await cue());
  await p.keyboard.press('ArrowRight'); await p.waitForTimeout(400); console.log('right after →:', await cue());
  await p.waitForTimeout(3500); console.log('second work:', await cue());
- await p.keyboard.press('k'); await p.waitForTimeout(800); console.log('after K:', await cue());
+ const top=()=>p.evaluate(()=>getComputedStyle(document.getElementById('top')).opacity+' · pile button '+(document.getElementById('pileBtn').classList.contains('glow')?'lit':'plain'));
+ await p.keyboard.press('k'); await p.waitForTimeout(800); console.log('after K:', await cue(), '· top bar', await top());
+ await p.waitForTimeout(2600); console.log('3 s later: top bar', await top());
+ await p.keyboard.press('k'); await p.keyboard.press('k'); await p.waitForTimeout(800); console.log('second keep: top bar', await top());
  await p.keyboard.press('ArrowRight'); await p.waitForTimeout(4000); console.log('third work:', await cue());
  for(let i=0;i<12;i++){await p.mouse.wheel(0,-120);await p.waitForTimeout(60);} await p.waitForTimeout(1500); console.log('zoomed in:', await cue());
  await p.keyboard.press('Escape'); await p.waitForTimeout(800); console.log('after Esc:', await cue());

@@ -73,6 +73,8 @@ body.zoomed #zoomOut{display:inline-block}
 /* The intro: one short line at a time, each at the moment it's useful. */
 #cue{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);font:italic 16px var(--serif);color:var(--ink-dim);opacity:0;transition:opacity .6s ease;pointer-events:none;z-index:4;white-space:nowrap}
 #cue.on{opacity:1}
+#pileBtn{transition:border-color .4s,color .4s,box-shadow .4s}
+#pileBtn.glow{border-color:var(--gilt);color:var(--gilt);box-shadow:0 0 14px rgba(198,162,90,.45)}
 body.show-bottom #cue,body.pinned #cue{bottom:72px}
 
 /* pile */
@@ -625,6 +627,7 @@ body.show-bottom #cue,body.pinned #cue{bottom:72px}
         keptAt: new Date().toISOString()
       });
       toast('Kept');
+      cueShowPile();
     }
     cueDid('keep');
     save(); updateCount();
@@ -731,7 +734,8 @@ body.show-bottom #cue,body.pinned #cue{bottom:72px}
   // Each line waits for its moment, fades on its own, and retires once acted on or seen on 3 works.
   const CUES = [
     { k: 'next', html: '<kbd>→</kbd> for the next one' },
-    { k: 'keep', html: '<kbd>K</kbd> keeps one that holds you' },
+    { k: 'keep', html: '<kbd>K</kbd> to keep one · it goes in your kept pile' },
+    { k: 'pile', onKeep: true },
     { k: 'zoom', html: 'Scroll to go closer' },
     { k: 'back', html: 'Drag to move · <kbd>Esc</kbd> for the whole work', onZoom: true },
     { k: 'edges', html: 'Controls wait at the top and bottom edges · <kbd>?</kbd> for every key' }
@@ -756,7 +760,7 @@ body.show-bottom #cue,body.pinned #cue{bottom:72px}
   }
   function cueOnWork() {
     cueHide(); clearTimeout(cueShowT);
-    const c = CUES.find(c => !c.onZoom && !cueSeen(c.k));
+    const c = CUES.find(c => !c.onZoom && !c.onKeep && !cueSeen(c.k));
     if (!c) return;
     const g = gen;
     cueShowT = setTimeout(() => {
@@ -767,6 +771,16 @@ body.show-bottom #cue,body.pinned #cue{bottom:72px}
   function cueOnZoom() {
     const c = CUES.find(c => c.onZoom && !cueSeen(c.k));
     if (c && cueOnce !== gen) { cueOnce = gen; clearTimeout(cueShowT); cueShow(c); }
+  }
+
+  // The first keep brings the top bar in for a moment, with the pile button lit, so you see where it went.
+  function cueShowPile() {
+    if (cueSeen('pile')) return;
+    cueDid('pile'); log('  intro: kept pile shown');
+    const b = document.body, btn = $('pileBtn');
+    b.classList.add('show-top'); btn.classList.add('glow');
+    setTimeout(() => btn.classList.remove('glow'), 2200);
+    setTimeout(() => b.classList.remove('show-top'), 2800);
   }
 
   // ---------- controls ----------

@@ -1,0 +1,855 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stillroom</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;1,6..72,400&family=Instrument+Sans:wght@400;500&display=swap">
+<style>
+/* Layout: one work at a time, filling a dark room; controls sit at the edges and fade away when the mouse rests. */
+:root{
+  --wall:#141312;      /* the darkened room */
+  --wall-2:#1f1d1a;    /* panels: label, pile */
+  --ink:#ebe6dd;
+  --ink-dim:#9c958b;
+  --line:rgba(235,230,221,.14);
+  --gilt:#c6a25a;      /* frame gilding: used only for "kept" */
+  --serif:"Newsreader",Georgia,"Times New Roman",serif;
+  --sans:"Instrument Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--wall);color:var(--ink);font:14px/1.45 var(--sans);overflow:hidden;cursor:default}
+body.idle{cursor:none}
+button{font:inherit;color:inherit;background:none;border:1px solid var(--line);border-radius:3px;padding:6px 11px;cursor:pointer}
+button:hover{border-color:var(--ink-dim)}
+button:focus-visible,a:focus-visible{outline:2px solid var(--gilt);outline-offset:2px}
+button[aria-pressed="true"]{border-color:var(--ink);background:rgba(235,230,221,.08)}
+a{color:var(--ink)}
+kbd{font:500 11px/1 var(--sans);border:1px solid var(--line);border-radius:3px;padding:2px 5px;color:var(--ink)}
+
+#stage{position:fixed;inset:0;--pad-y:60px;--pad-x:56px}
+#frame{position:absolute;top:var(--pad-y);left:var(--pad-x);right:var(--pad-x);bottom:var(--pad-y)}
+#art{width:100%;height:100%;opacity:0;transition:opacity .5s ease;cursor:zoom-in;touch-action:none}
+#art.shown{opacity:1}
+body.zoomed #art{cursor:grab}
+body.zoomed #art:active{cursor:grabbing}
+body.gliding #art{cursor:crosshair}
+body.idle #art{cursor:none}
+#glideBtn[aria-pressed="true"]{border-color:var(--ink)}
+#status{position:fixed;inset:0;display:grid;place-items:center;color:var(--ink-dim);pointer-events:none;text-align:center;padding:0 24px}
+
+/* Controls stay out of sight, like the Dock: the cursor near an edge, or H, brings them in. */
+.chrome{position:fixed;left:0;right:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 16px;z-index:5;
+  opacity:0;pointer-events:none;transition:opacity .25s ease,transform .25s ease}
+#top.chrome{transform:translateY(-10px)}
+#bottom.chrome{transform:translateY(10px)}
+body.show-top #top,body.show-bottom #bottom,body.pinned .chrome,.chrome:focus-within{opacity:1;pointer-events:auto;transform:none}
+#top{top:0;justify-content:space-between}
+#bottom{bottom:0;justify-content:center}
+.group{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.sep{width:1px;align-self:stretch;background:var(--line);margin:0 4px}
+.wordmark{font:italic 18px/1 var(--serif);letter-spacing:.01em;color:var(--ink-dim);margin-right:6px}
+#keepBtn[aria-pressed="true"]{border-color:var(--gilt);color:var(--gilt);background:transparent}
+#zoomOut{display:none}
+body.zoomed #zoomOut{display:inline-block}
+
+/* wall label, in the museum's own format */
+#label{position:fixed;left:16px;bottom:64px;max-width:min(420px,calc(100% - 32px));background:var(--wall-2);border:1px solid var(--line);padding:16px 18px;z-index:6}
+#label .artist{font-weight:500}
+#label .title{font:italic 19px/1.3 var(--serif);margin:4px 0 2px;text-wrap:balance}
+#label .meta{color:var(--ink-dim)}
+#label .credit{color:var(--ink-dim);font-size:12px;margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+
+#toast{position:fixed;top:56px;left:50%;transform:translateX(-50%);font:italic 16px var(--serif);color:var(--gilt);opacity:0;transition:opacity .3s;pointer-events:none;z-index:7}
+#toast.on{opacity:1}
+
+#hint{position:fixed;left:50%;bottom:64px;transform:translateX(-50%);background:var(--wall-2);border:1px solid var(--line);padding:14px 16px;max-width:calc(100% - 32px);width:520px;z-index:6;color:var(--ink-dim)}
+#hint p{margin:0 0 8px}
+#hint .keys{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;align-items:center;margin-bottom:10px}
+/* The intro: one short line at a time, each at the moment it's useful. */
+#cue{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);font:italic 16px var(--serif);color:var(--ink-dim);opacity:0;transition:opacity .6s ease;pointer-events:none;z-index:4;white-space:nowrap}
+#cue.on{opacity:1}
+#pileBtn{transition:border-color .4s,color .4s,box-shadow .4s}
+#pileBtn.glow{border-color:var(--gilt);color:var(--gilt);box-shadow:0 0 14px rgba(198,162,90,.45)}
+body.show-bottom #cue,body.pinned #cue{bottom:72px}
+
+/* pile */
+#pile{position:fixed;inset:0;background:var(--wall);z-index:10;overflow:auto;padding-block:20px 40px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+#pile header{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin:0 auto 20px;max-width:1200px}
+#pile h2{font:italic 28px/1.1 var(--serif);margin:0}
+#pile .sub{color:var(--ink-dim)}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:28px 22px;max-width:1200px;margin:0 auto}
+.card{display:flex;flex-direction:column;gap:8px;min-width:0}
+.card .frame{background:var(--wall-2);aspect-ratio:4/5;display:grid;place-items:center;padding:10px;cursor:pointer;border:1px solid transparent}
+.card .frame:hover{border-color:var(--line)}
+.card img{max-width:100%;max-height:100%;object-fit:contain}
+.card .artist{font-size:12px;color:var(--ink-dim)}
+.card .title{font:italic 15px/1.3 var(--serif)}
+.card .row{display:flex;gap:10px;font-size:12px}
+.card .row button{padding:2px 8px;font-size:12px}
+#empty{color:var(--ink-dim);max-width:1200px;margin:40px auto;font:italic 18px var(--serif)}
+
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+/* The zoom library's own error text; Stillroom shows its own message instead. */
+.openseadragon-message{display:none!important}
+@media (max-width:640px){#stage{--pad-y:64px;--pad-x:12px}}
+</style>
+</head>
+<body>
+
+<div id="stage"><div id="frame"><div id="art" role="img" aria-label="Artwork, label hidden"></div></div></div>
+<div id="status">Hanging the first one…</div>
+
+<div class="chrome" id="top">
+  <div class="group">
+    <span class="wordmark">Stillroom</span>
+    <button id="t-painting" data-type="painting">Paintings</button>
+    <button id="t-drawing" data-type="drawing">Drawings &amp; watercolors</button>
+    <button id="t-print" data-type="print">Prints</button>
+    <span class="sep" aria-hidden="true"></span>
+    <button id="m-aic" title="Only the Art Institute of Chicago">Art Institute</button>
+    <button id="m-rijks" title="Only the Rijksmuseum">Rijksmuseum</button>
+    <button id="m-both" title="Both museums, mixed">Both</button>
+  </div>
+  <div class="group">
+    <button id="keysBtn" title="Every key (?)">?</button>
+    <button id="pileBtn">Kept pile (<span id="pileCount">0</span>)</button>
+    <button id="fsBtn" title="Full screen (F)">Full screen</button>
+  </div>
+</div>
+
+<div class="chrome" id="bottom">
+  <button id="prevBtn" title="Previous (←)">←</button>
+  <button id="keepBtn" aria-pressed="false" title="Keep (K)">Keep</button>
+  <button id="nextBtn" title="Next (→ or Space)">Next →</button>
+  <button id="infoBtn" aria-pressed="false" title="Show the label (I)">Label</button>
+  <button id="glideBtn" aria-pressed="false" title="Let the cursor steer the view while zoomed in (G)">Glide</button>
+  <button id="zoomOut" title="Back to the whole work (Esc)">Whole work</button>
+</div>
+
+<div id="label" hidden></div>
+<div id="toast">Kept</div>
+<div id="cue" aria-live="polite"></div>
+
+<div id="hint" hidden>
+  <p>Every key, for when you want one. <kbd>?</kbd> opens and closes this.</p>
+  <div class="keys">
+    <span><kbd>→</kbd> <kbd>Space</kbd></span><span>next</span>
+    <span><kbd>K</kbd></span><span>keep it (press again to un-keep)</span>
+    <span><kbd>scroll</kbd> <kbd>pinch</kbd></span><span>zoom smoothly toward wherever the cursor is</span>
+    <span><kbd>drag</kbd></span><span>move around the surface while zoomed in</span>
+    <span><kbd>G</kbd></span><span>glide: while zoomed in, just move the cursor and the view follows it across the work</span>
+    <span><kbd>Esc</kbd> <kbd>0</kbd></span><span>back to the whole work</span>
+    <span><kbd>I</kbd></span><span>show the wall label</span>
+    <span><kbd>P</kbd> · <kbd>F</kbd></span><span>kept pile · full screen</span>
+    <span><kbd>D</kbd></span><span>save a log of this session, to send along with a screen recording when something goes wrong</span>
+    <span><kbd>edge</kbd> <kbd>H</kbd></span><span>controls stay hidden: move the cursor to the top or bottom edge to bring them in, or press H to keep them showing</span>
+  </div>
+  <button id="hintClose">Close</button>
+</div>
+
+<section id="pile" hidden aria-label="Kept pile">
+  <header>
+    <div><h2>Kept</h2><div class="sub" id="pileSub"></div></div>
+    <div class="group">
+      <button id="exportBtn">Save pile as a file</button>
+      <button id="importBtn">Load a pile file</button>
+      <input type="file" id="importFile" accept="application/json,.json" hidden>
+      <button id="pileClose">Back to looking (Esc)</button>
+    </div>
+  </header>
+  <div id="grid"></div>
+  <p id="empty" hidden>Nothing kept yet. Press K on a work that does something to you.</p>
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/openseadragon.min.js"></script>
+<script>
+(() => {
+  const API = 'https://api.artic.edu/api/v1/artworks/search';
+  const FIELDS = 'id,title,artist_display,date_display,medium_display,artwork_type_title,image_id,thumbnail,is_public_domain,is_zoomable,dimensions,main_reference_number';
+  const TYPES = { painting: 'Painting', drawing: 'Drawing and Watercolor', print: 'Print' };
+  // Which copy is this? The live site, the dev site (…/stillroom/dev/), or a file opened on this computer.
+  // Dev keeps its own kept pile, so trying things out never touches the real one.
+  const BUILD = 'dev 50911aa 2026-10-20T16:22Z';
+  const ENV = location.protocol === 'file:' ? 'local' : (/\/dev(\/|$)/.test(location.pathname) ? 'dev' : 'live');
+  const KEY = ENV === 'dev' ? 'stillroom.dev.v1' : 'stillroom.v1';
+  if (ENV === 'dev') { document.title = 'Stillroom (dev)'; document.querySelector('.wordmark').textContent = 'Stillroom · dev'; }
+
+  // ---------- session log: always on, kept in this browser, saved with D ----------
+  // Each line is stamped with the clock time so it lines up with a screen recording.
+  // The log is stored next to the pile (its own key, so dev keeps its own), so closing the tab loses nothing.
+  // D saves every session since the last D and starts the stored log afresh. Past 5000 lines the oldest go.
+  const LOG_KEY = KEY + '.log', LOG_MAX = 5000;
+  const LOG = (() => { try { const l = JSON.parse(localStorage.getItem(LOG_KEY)); if (Array.isArray(l)) return l; } catch (e) {} return []; })();
+  const pad = (n, w = 2) => String(n).padStart(w, '0');
+  let logTimer = 0;
+  function storeLog() {
+    clearTimeout(logTimer); logTimer = 0;
+    try { localStorage.setItem(LOG_KEY, JSON.stringify(LOG)); }
+    catch (e) { // storage full: drop the older half rather than stop logging
+      LOG.splice(0, LOG.length >> 1, '(older lines dropped: browser storage full)');
+      try { localStorage.setItem(LOG_KEY, JSON.stringify(LOG)); } catch (e2) {}
+    }
+  }
+  function log(msg) {
+    const t = new Date();
+    LOG.push(`${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())}.${pad(t.getMilliseconds(), 3)}  ${msg}`);
+    if (LOG.length > LOG_MAX) LOG.splice(0, LOG.length - LOG_MAX);
+    if (!logTimer) logTimer = setTimeout(storeLog, 1000);
+  }
+  addEventListener('pagehide', storeLog);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) storeLog(); });
+  const ms = t0 => Math.round(performance.now() - t0) + 'ms';
+  const sizeOf = u => ((u.match(/\/full\/([^/]+)\//) || [])[1] || '?').replace(/,$/, 'px');
+  window.addEventListener('error', e => log(`SCRIPT ERROR ${e.message} (${(e.filename || '').split('/').pop()}:${e.lineno})`));
+  window.addEventListener('unhandledrejection', e => log(`SCRIPT ERROR (promise) ${e.reason && e.reason.message || e.reason}`));
+  const today = () => { const t = new Date(); return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`; };
+  const sessionLine = word => log(`session ${word} · ${today()} · ${ENV} · build ${BUILD.startsWith('__') ? 'unstamped' : BUILD} · ${navigator.userAgent} · window ${innerWidth}×${innerHeight} @${devicePixelRatio}x`);
+  sessionLine('start');
+  function saveLog() {
+    log('log saved');
+    const t = new Date(), stamp = `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}-${pad(t.getHours())}${pad(t.getMinutes())}${pad(t.getSeconds())}`;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([LOG.join('\n') + '\n'], { type: 'text/plain' }));
+    a.download = `stillroom-log-${stamp}.txt`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    const sessions = LOG.filter(l => l.includes('  session start · ')).length;
+    LOG.length = 0; sessionLine('continues'); storeLog();
+    toast(sessions > 1 ? `Log saved (${sessions} sessions)` : 'Log saved');
+  }
+  const $ = id => document.getElementById(id);
+
+  // ---------- storage (local to this browser) ----------
+  function loadState() {
+    try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && Array.isArray(s.kept)) return s; } catch (e) {}
+    return { kept: [], seen: [], types: ['painting', 'drawing', 'print'], hinted: false };
+  }
+  const state = loadState();
+  if (!Array.isArray(state.seen)) state.seen = [];
+  if (!Array.isArray(state.types) || !state.types.length) state.types = ['painting', 'drawing', 'print'];
+  if (!['aic', 'rijks', 'both'].includes(state.museum)) state.museum = 'both';
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+  const seenSet = new Set(state.seen);
+  { const rk = state.seen.filter(id => String(id).startsWith('rijks:')).length; log(`seen list: ${state.seen.length} works (Art Institute ${state.seen.length - rk}, Rijksmuseum ${rk})`); }   // if this ever shrinks between visits, the list was lost or overwritten
+  function markSeen(id) {
+    if (seenSet.has(id)) return;
+    seenSet.add(id); state.seen.push(id);
+    if (state.seen.length > 8000) { const drop = state.seen.splice(0, 1000); drop.forEach(d => seenSet.delete(d)); log('seen list full: oldest 1000 dropped'); }
+    save();
+  }
+  const isKept = id => state.kept.some(k => k.id === id);
+
+  // ---------- fetching from the Art Institute of Chicago ----------
+  let iiif = 'https://www.artic.edu/iiif/2';
+  let strategy = 0;            // 0: random-scored query, 1: plain filtered query, 2: unfiltered + filter here
+  let seed = Math.floor(Math.random() * 1e9), pageNo = 0, total = null;
+  let queue = [], fetching = null;
+
+  function buildQuery() {
+    const should = state.types.map(k => ({ match_phrase: { artwork_type_title: TYPES[k] } }));
+    const base = { bool: {
+      filter: [{ term: { is_public_domain: true } }, { exists: { field: 'image_id' } }],
+      must: [{ bool: { should, minimum_should_match: 1 } }]
+    } };
+    if (strategy === 0) return { query: { function_score: { query: base, boost_mode: 'replace', random_score: { seed, field: 'id' } } } };
+    if (strategy === 1) return { query: base };
+    return null;
+  }
+  function nextPage() {
+    if (strategy === 0) { pageNo++; if (pageNo > 100) { seed = Math.floor(Math.random() * 1e9); pageNo = 1; } return pageNo; }
+    const max = total ? Math.max(1, Math.min(100, Math.ceil(total / 100))) : 1;
+    return 1 + Math.floor(Math.random() * max);
+  }
+  function wanted(d) {
+    const titles = state.types.map(k => TYPES[k]);
+    return d && d.image_id && d.is_public_domain === true && titles.includes(d.artwork_type_title) && !seenSet.has(d.id);
+  }
+  function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+
+  async function fetchBatch() {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const q = buildQuery();
+      let url = `${API}?limit=100&page=${nextPage()}&fields=${FIELDS}`;
+      if (q) url += '&params=' + encodeURIComponent(JSON.stringify(q));
+      let res; const t0 = performance.now();
+      try { res = await fetch(url); } catch (e) { log(`collection search failed: no connection (${ms(t0)})`); throw new Error('network'); }
+      if (!res.ok) { log(`collection search failed: HTTP ${res.status} (${ms(t0)}), strategy ${strategy}`); if (strategy < 2) { strategy++; pageNo = 0; continue; } throw new Error('api'); }
+      const json = await res.json();
+      log(`collection search ok (${ms(t0)}): ${(json.data || []).length} results, strategy ${strategy}`);
+      if (json.config && json.config.iiif_url) iiif = json.config.iiif_url;
+      if (json.pagination && json.pagination.total) total = json.pagination.total;
+      const got = shuffle((json.data || []).filter(wanted));
+      if (!got.length && strategy < 2 && attempt === 1 && !(json.data || []).length) { strategy++; pageNo = 0; continue; }
+      if (got.length) { queue.push(...got.filter(g => !queue.some(x => x.id === g.id))); return; }
+    }
+  }
+  // Ask both museums; go on as soon as either one has a work ready.
+  function fill() {
+    if (!fetching && state.museum !== 'rijks' && queue.length < 15) fetching = fetchBatch().finally(() => { fetching = null; });
+    const asks = [fetching || Promise.resolve(), state.museum !== 'aic' ? rkFill() : Promise.resolve()];
+    return new Promise((resolve, reject) => {
+      let left = asks.length, err = null;
+      asks.forEach(a => a.catch(e => { err = err || e; }).then(() => {
+        if (ready()) resolve();
+        else if (--left === 0) err ? reject(err) : resolve();
+      }));
+    });
+  }
+
+  // ---------- fetching from the Rijksmuseum ----------
+  // No key needed. The search returns only ids, 100 at a time in id order; each work's record then
+  // takes one more request, so a few are looked up ahead, one at a time. Only works the museum marks
+  // public domain are kept (its search also finds works still in copyright).
+  const RK_SEARCH = 'https://data.rijksmuseum.nl/search/collection', RK_DATA = 'https://data.rijksmuseum.nl/';
+  const RK_TYPES = { painting: 'schilderij', drawing: 'tekening', print: 'prent' };
+  const RK_NAMES = { painting: 'Painting', drawing: 'Drawing', print: 'Print' };
+  let rkIds = [], rkReady = [], rkBusy = null, rkPauseUntil = 0, rkGen = 0, rkTokens = true;
+
+  // A page token is just the id to start after, so a random one starts at a random stretch of the collection.
+  function rkToken() {
+    const start = '200' + (1 + Math.floor(Math.random() * 9)) + String(Math.floor(Math.random() * 1000)).padStart(3, '0');
+    return btoa('{"token": "https://id.rijksmuseum.nl/' + start + '"}').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  async function rkSearch(g) {
+    const k = state.types[Math.floor(Math.random() * state.types.length)];
+    for (let attempt = 0; attempt < 4; attempt++) {
+      let url = `${RK_SEARCH}?type=${RK_TYPES[k]}&imageAvailable=true`;
+      if (rkTokens && attempt < 3) url += '&pageToken=' + rkToken();
+      let res; const t0 = performance.now();
+      try { res = await fetch(url); } catch (e) { log(`rijksmuseum search failed: no connection (${ms(t0)})`); throw new Error('network'); }
+      if (!res.ok) { log(`rijksmuseum search failed: HTTP ${res.status} (${ms(t0)})`); if (rkTokens) { rkTokens = false; continue; } throw new Error('api'); }
+      const json = await res.json();
+      if (g !== rkGen) return;
+      const ids = (json.orderedItems || []).map(o => o.id && o.id.split('/').pop()).filter(n => n && !seenSet.has('rijks:' + n));
+      log(`rijksmuseum search ok (${ms(t0)}): ${ids.length} new, ${RK_TYPES[k]}`);
+      // neighbouring ids are often one series (an album of prints), so take only four from each stretch
+      if (ids.length) { rkIds.push(...shuffle(ids).slice(0, 4).map(n => ({ n, k }))); return; }
+    }
+  }
+  // Pull a readable value out of the museum's record: {en, nl}, [{@language, @value}], a plain string, or a list of those.
+  function rkText(v) {
+    if (v == null) return '';
+    if (typeof v === 'string') return v;
+    if (Array.isArray(v)) { const en = v.find(x => x && x['@language'] === 'en'); return rkText(en || v[0]); }
+    if (v['@value'] != null) return String(v['@value']);
+    if (v.en != null || v.nl != null) return rkText(v.en != null ? v.en : v.nl);
+    return '';
+  }
+  const rkLabel = c => rkText(c && c['http://www.w3.org/2004/02/skos/core#prefLabel']);
+  const rkList = v => (Array.isArray(v) ? v : v ? [v] : []);
+  async function rkResolve({ n, k }) {
+    const t0 = performance.now(); let res;
+    try { res = await fetch(`${RK_DATA}${n}?_profile=edm-framed`); } catch (e) { log(`rijksmuseum record ${n} failed: no connection (${ms(t0)})`); throw new Error('network'); }
+    if (!res.ok) { log(`rijksmuseum record ${n} failed: HTTP ${res.status} (${ms(t0)})`); return null; }
+    const j = await res.json(), c = j.aggregatedCHO || {};
+    if (!/publicdomain/.test(j.edmRights || '')) { log(`rijksmuseum record ${n} skipped: not public domain (${ms(t0)})`); return null; }
+    const shown = j.isShownBy || {};
+    const svc = (shown['http://rdfs.org/sioc/services#has_service'] || {}).id || (shown.id || '').replace(/\/full\/.*$/, '');
+    if (!svc) { log(`rijksmuseum record ${n} skipped: no image (${ms(t0)})`); return null; }
+    // The record doesn't give the image's size, and the image server won't enlarge; it describes itself in one small request.
+    let size = null;
+    try { const r = await fetch(svc + '/info.json'); if (r.ok) { const i = await r.json(); if (i.width && i.height) size = { width: i.width, height: i.height }; } } catch (e) {}
+    log(`rijksmuseum record ${n} ok (${ms(t0)})${size ? '' : ', size unknown'}`);
+    const ref = rkText(c.identifier);
+    return {
+      src: 'rijks', id: 'rijks:' + n, iiif: svc.slice(0, svc.lastIndexOf('/')), image_id: svc.slice(svc.lastIndexOf('/') + 1),
+      title: rkText(c.title), artist_display: rkList(c.creator).map(rkLabel).filter(Boolean).join(', '),
+      date_display: rkText(c.created), medium_display: rkList(c.medium).map(rkLabel).filter(Boolean).join(', '),
+      dimensions: rkList(c.extent).filter(x => !x['@language'] || x['@language'] === 'en').map(rkText).join('; '),
+      artwork_type_title: RK_NAMES[k], main_reference_number: ref, is_public_domain: true, thumbnail: size,
+      link: (j.isShownAt && j.isShownAt.id) || (ref ? 'https://www.rijksmuseum.nl/en/search?q=' + encodeURIComponent(ref) : 'https://www.rijksmuseum.nl/')
+    };
+  }
+  // Keep three Rijksmuseum works looked up ahead. After a failure, leave the museum alone for a minute.
+  function rkFill() {
+    if (rkBusy) return rkBusy;
+    if (rkReady.length >= 3 || (Date.now() < rkPauseUntil && state.museum === 'both')) return Promise.resolve();
+    const g = rkGen;
+    rkBusy = (async () => {
+      for (let tries = 0; tries < 30 && rkReady.length < 3 && g === rkGen; tries++) {
+        if (!rkIds.length) await rkSearch(g);
+        if (!rkIds.length || g !== rkGen) return;
+        const d = await rkResolve(rkIds.shift());
+        if (d && g === rkGen && !seenSet.has(d.id)) rkReady.push(d);
+      }
+    })().catch(e => { rkPauseUntil = Date.now() + 60000; throw e; }).finally(() => { rkBusy = null; });
+    return rkBusy;
+  }
+  // Which museum the next work comes from: one chosen in the top bar, or with Both a coin toss,
+  // decided one ahead so the next image can preload.
+  let rkTurn = Math.random() < 0.5;
+  const ready = () => state.museum === 'rijks' ? rkReady.length : state.museum === 'aic' ? queue.length : queue.length + rkReady.length;
+  const fromRk = () => state.museum === 'rijks' || (state.museum === 'both' && rkReady.length > 0 && (rkTurn || !queue.length));
+  const upNext = () => fromRk() ? rkReady[0] : queue[0];
+  function takeNext() {
+    const d = fromRk() ? rkReady.shift() : queue.shift();
+    rkTurn = Math.random() < 0.5;
+    return d;
+  }
+  const museum = d => d.src === 'rijks' ? 'Rijksmuseum' : 'Art Institute of Chicago';
+  const pageOf = d => d.link || 'https://www.artic.edu/artworks/' + d.id;
+
+  // ---------- images ----------
+  // Never ask for more pixels than the original has: the image server won't enlarge, and refuses instead.
+  const natW = d => (d.thumbnail && d.thumbnail.width) || d.w || 0;
+  const fit = (d, w) => { const n = natW(d); return n && n < w ? n : w; };
+  const full = (d, w) => `${d.iiif || iiif}/${d.image_id}/full/${fit(d, w)},/0/default.jpg`;
+  const native = d => `${d.iiif || iiif}/${d.image_id}/full/${d.src === 'rijks' ? 'max' : 'full'}/0/default.jpg`;   // IIIF 3 says max
+  function setSrc(img, urls, onFail) {
+    let i = 0;
+    img.onerror = () => { i++; if (i < urls.length) img.src = urls[i]; else if (onFail) onFail(); };
+    img.src = urls[0];
+  }
+  // ---------- viewing ----------
+  const art = $('art'), status = $('status'), label = $('label');
+  let history = [], pos = -1;
+
+  function current() { return history[pos]; }
+  function showStatus(t) { status.textContent = t || ''; status.hidden = !t; }
+
+  // Deep-zoom viewer, kept light on the museum's server (it asks for one image at a time):
+  //   1. one 843px image, the size the museum keeps ready, so the work appears fast;
+  //   2. one 1686px image on top, so it is sharp on a laptop screen;
+  //   3. detail tiles only once you zoom in past what that image can show, a few at a time.
+  // Each work gets a number; anything that arrives for an earlier work is ignored and removed.
+  const OSD = window.OpenSeadragon;
+  let viewer = null, gen = 0, work = null, stallT = 0, workCount = 0;
+
+  if (OSD) {
+    viewer = OSD({
+      element: art,
+      showNavigationControl: false,
+      animationTime: 0.9,
+      springStiffness: 7,
+      blendTime: 0.3,
+      zoomPerScroll: 1.12,
+      zoomPerClick: 1.8,
+      visibilityRatio: 0.5,
+      constrainDuringPan: true,
+      minZoomImageRatio: 0.9,
+      maxZoomPixelRatio: 2.5,
+      immediateRender: true,
+      preserveImageSizeOnResize: true,
+      imageLoaderLimit: 3,            // never more than three requests in flight
+      maxImageCacheCount: 120,        // cap on decoded images kept in memory
+      gestureSettingsMouse: { clickToZoom: true, dblClickToZoom: false, scrollToZoom: true, flickEnabled: true, flickMinSpeed: 120, flickMomentum: 0.3 },
+      gestureSettingsTouch: { pinchToZoom: true, flickEnabled: true }
+    });
+    // Stillroom's own keys win over the viewer's built-in ones.
+    viewer.addHandler('canvas-key', e => { e.preventDefaultAction = true; });
+    viewer.addHandler('tile-loaded', e => {
+      if (!work || work.shown || viewer.world.getIndexOfItem(e.tiledImage) === -1) return;
+      work.shown = true; clearTimeout(stallT);
+      log(`  shown after ${ms(work.t0)} (try ${work.tries + 1})`);
+      art.classList.add('shown'); showStatus(''); cueOnWork();
+      addSharp(work);
+    });
+    viewer.addHandler('zoom', updateZoomState);
+    viewer.addHandler('animation-finish', updateZoomState);
+    viewer.addHandler('resize', updateZoomState);
+    viewer.addHandler('tile-load-failed', e => {
+      if (!work || (work.tileFails = (work.tileFails || 0) + 1) > 5) return;
+      log(`  detail tile failed: ${e.message || 'no reason given'}`);
+    });
+
+    // Safari trackpad pinch arrives as gesture events rather than wheel events.
+    let lastScale = 1;
+    art.addEventListener('gesturestart', e => { e.preventDefault(); lastScale = 1; });
+    art.addEventListener('gesturechange', e => {
+      e.preventDefault();
+      const r = art.getBoundingClientRect();
+      const pt = viewer.viewport.pointFromPixel(new OSD.Point(e.clientX - r.left, e.clientY - r.top));
+      viewer.viewport.zoomBy(e.scale / lastScale, pt);
+      lastScale = e.scale;
+    });
+    art.addEventListener('gestureend', e => e.preventDefault());
+  }
+
+  // Add a layer for the current work only; drop it if you've moved on by the time it arrives.
+  function addLayer(w, tileSource, name) {
+    const t0 = performance.now();
+    log(`  ${name} requested`);
+    viewer.addTiledImage({
+      tileSource,
+      success: e => {
+        if (w.gen !== gen) { viewer.world.removeItem(e.item); log(`  ${name} for work ${w.d.id} arrived after moving on (${ms(t0)}), dropped`); return; }
+        log(`  ${name} ok (${ms(t0)})`);
+      },
+      error: e => log(`  ${name} failed (${ms(t0)}): ${e && e.message || 'no reason given'}`)   // the layer underneath stays
+    });
+  }
+  function addSharp(w) {
+    if (w.sharp || w.gen !== gen) return;
+    w.sharp = true;
+    const n = natW(w.d);
+    if (n && n <= 900) return;   // a small original: the first image already shows all there is
+    const u = full(w.d, 1686);
+    addLayer(w, { type: 'image', url: u, buildPyramid: false }, `sharp ${sizeOf(u)}`);
+  }
+  function addDetail(w) {
+    const d = w.d, W = d.thumbnail && d.thumbnail.width, H = d.thumbnail && d.thumbnail.height;
+    if (w.detail || d.is_zoomable === false) return;
+    // The Rijksmuseum's server is IIIF 3; its own description (already fetched once, so cached) sets up the tiles.
+    if (d.src === 'rijks') { w.detail = true; addLayer(w, `${d.iiif}/${d.image_id}/info.json`, 'detail tiles (zoomed past 1.4×)'); return; }
+    if (!W || !H) return;
+    w.detail = true;
+    let n = 0; while (Math.max(W, H) / Math.pow(2, n) > 512 && n < 10) n++;
+    addLayer(w, {
+      '@context': 'http://iiif.io/api/image/2/context.json', '@id': `${iiif}/${d.image_id}`,
+      protocol: 'http://iiif.io/api/image', width: W, height: H,
+      profile: ['http://iiif.io/api/image/2/level2.json'],
+      tiles: [{ width: 512, scaleFactors: Array.from({ length: n + 1 }, (_, i) => Math.pow(2, i)) }]
+    }, 'detail tiles (zoomed past 1.4×)');
+  }
+
+  function updateZoomState() {
+    if (!viewer || !viewer.world.getItemCount()) return;
+    const vp = viewer.viewport, ratio = vp.getZoom() / vp.getHomeZoom();
+    document.body.classList.toggle('zoomed', ratio > 1.04);
+    if (ratio > 1.4) { cueDid('zoom'); cueOnZoom(); }
+    if (work && work.shown && ratio > 1.4) addDetail(work);
+  }
+  function goHome() { if (viewer) viewer.viewport.goHome(); }
+  function zoomStep(f) { if (viewer) viewer.viewport.zoomBy(f); }
+
+  // Glide: while zoomed in, the cursor's place on the screen picks the place on the work.
+  let glideRaf = 0, gx = 0.5, gy = 0.5;
+  function setGlide(on) {
+    state.glide = !!on; save();
+    document.body.classList.toggle('gliding', state.glide);
+    $('glideBtn').setAttribute('aria-pressed', String(state.glide));
+  }
+  art.addEventListener('mousemove', e => {
+    if (!state.glide || !viewer || !document.body.classList.contains('zoomed')) return;
+    const r = art.getBoundingClientRect();
+    gx = (e.clientX - r.left) / r.width; gy = (e.clientY - r.top) / r.height;
+    if (!glideRaf) glideRaf = requestAnimationFrame(applyGlide);
+  });
+  function applyGlide() {
+    glideRaf = 0;
+    const item = viewer.world.getItemAt(0); if (!item) return;
+    const b = item.getBounds(), vb = viewer.viewport.getBounds(true);
+    const ease = t => Math.min(1, Math.max(0, (t - 0.1) / 0.8));   // a little slack at the screen's edges
+    const cx = b.width > vb.width ? b.x + vb.width / 2 + ease(gx) * (b.width - vb.width) : b.x + b.width / 2;
+    const cy = b.height > vb.height ? b.y + vb.height / 2 + ease(gy) * (b.height - vb.height) : b.y + b.height / 2;
+    viewer.viewport.panTo(new OSD.Point(cx, cy));
+  }
+
+  function render() {
+    const d = current(); if (!d) return;
+    document.body.classList.remove('zoomed');
+    art.classList.remove('shown');
+    showStatus('');
+    markSeen(d.id);
+    $('keepBtn').setAttribute('aria-pressed', String(isKept(d.id)));
+    $('keepBtn').textContent = isKept(d.id) ? 'Kept' : 'Keep';
+    label.hidden = true; $('infoBtn').setAttribute('aria-pressed', 'false');
+    if (!viewer) { showStatus("The zoom viewer didn't load. Check your connection and reopen the page."); return; }
+
+    // Start fresh: drop queued requests for the last work, then open this one.
+    gen++;
+    work = { gen, d, shown: false, sharp: false, detail: false, tries: 0, t0: performance.now() };
+    log(`WORK ${d.id} · ${museum(d)} · image ${d.image_id} · original ${natW(d) || '?'}×${(d.thumbnail && d.thumbnail.height) || '?'} · ${d.artwork_type_title || '?'} · #${++workCount} this session`);
+    if (viewer.imageLoader && viewer.imageLoader.clear) viewer.imageLoader.clear();
+    openBase(work);
+
+    const upcoming = history[pos + 1] || upNext();
+    if (upcoming && upcoming.image_id) { const im = new Image(); im.src = full(upcoming, 843); }
+  }
+
+  function openBase(w) {
+    clearTimeout(stallT);
+    const urls = [full(w.d, 843), full(w.d, 400), native(w.d)];
+    const url = urls[Math.min(w.tries, urls.length - 1)];
+    const t0 = performance.now();
+    log(`  base ${sizeOf(url)} requested (try ${w.tries + 1})`);
+    stallT = setTimeout(() => {
+      if (w.gen !== gen || w.shown) return;
+      showStatus('Still on its way. The museum’s server is slow right now. → skips it.');
+      log(`  still waiting at ${ms(t0)}`);
+      stallT = setTimeout(() => { if (w.gen === gen && !w.shown) { log(`  no answer after ${ms(t0)}, retrying`); retryBase(w); } }, 10000);
+    }, 4000);
+    viewer.open({
+      tileSource: { type: 'image', url, buildPyramid: false },
+      success: () => {},
+      error: e => {
+        log(`  base ${sizeOf(url)} failed (${ms(t0)}): ${e && e.message || 'no reason given'}${w.gen !== gen ? ' (already moved on)' : ''}`);
+        if (w.gen === gen) retryBase(w);
+      }
+    });
+  }
+  function retryBase(w) {
+    w.tries++;
+    clearTimeout(stallT);
+    if (w.tries <= 2) { showStatus('Trying that one again…'); setTimeout(() => { if (w.gen === gen) openBase(w); }, 1000); return; }
+    // Give up on this one: say which work it was (so it can be looked up), then move on.
+    showStatus(`This one wouldn’t load (${museum(w.d)} no. ${w.d.main_reference_number || w.d.id}). Moving on…`);
+    log(`  GAVE UP on work ${w.d.id} after ${ms(w.t0)}, skipping`);
+    w.failed = true;
+    setTimeout(() => { if (w.gen === gen) { history.splice(pos, 1); pos--; next(); } }, 2200);
+  }
+
+  async function next() {
+    if (pos < history.length - 1) { pos++; render(); return; }
+    if (!ready()) {
+      if (!current()) showStatus('Hanging the first one…'); else showStatus('Hanging the next one…');
+      art.classList.remove('shown');
+      try { await fill(); } catch (e) {
+        const which = { aic: "the Art Institute of Chicago's collection", rijks: "the Rijksmuseum's collection", both: "either museum's collection" }[state.museum];
+        showStatus(`Couldn't reach ${which}. Check your connection, then press → to try again.`);
+        return;
+      }
+      if (!ready()) { showStatus('Nothing new turned up with these filters. Try turning another medium on.'); return; }
+    }
+    history.push(takeNext()); pos = history.length - 1;
+    if (history.length > 300) { history.shift(); pos--; }
+    render();
+    if (queue.length < 15 || rkReady.length < 3) fill().catch(() => {});
+  }
+  function prev() { if (pos > 0) { pos--; log('← back'); render(); } }
+
+  // ---------- keep ----------
+  function toast(t) { const el = $('toast'); el.textContent = t; el.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('on'), 900); }
+  function toggleKeep() {
+    const d = current(); if (!d) return;
+    if (isKept(d.id)) { state.kept = state.kept.filter(k => k.id !== d.id); toast('Un-kept'); }
+    else {
+      state.kept.unshift({
+        id: d.id, image_id: d.image_id, title: d.title || '', artist: d.artist_display || '',
+        date: d.date_display || '', medium: d.medium_display || '', type: d.artwork_type_title || '',
+        dimensions: d.dimensions || '', ref: d.main_reference_number || '',
+        w: d.thumbnail && d.thumbnail.width, h: d.thumbnail && d.thumbnail.height,
+        ...(d.src ? { src: d.src, iiif: d.iiif, link: d.link } : {}),
+        keptAt: new Date().toISOString()
+      });
+      toast('Kept');
+      cueShowPile();
+    }
+    cueDid('keep');
+    save(); updateCount();
+    $('keepBtn').setAttribute('aria-pressed', String(isKept(d.id)));
+    $('keepBtn').textContent = isKept(d.id) ? 'Kept' : 'Keep';
+  }
+  function updateCount() { $('pileCount').textContent = state.kept.length; }
+
+  // ---------- wall label ----------
+  function fillLabel(el, d) {
+    el.textContent = '';
+    const add = (cls, txt) => { if (!txt) return; const div = document.createElement('div'); div.className = cls; div.textContent = txt; el.appendChild(div); };
+    add('artist', (d.artist_display || d.artist || 'Artist unknown').split('\n')[0]);
+    add('title', [d.title, d.date_display || d.date].filter(Boolean).join(', '));
+    add('meta', d.medium_display || d.medium);
+    add('meta', d.dimensions);
+    const credit = document.createElement('div'); credit.className = 'credit';
+    credit.append(museum(d) + ((d.main_reference_number || d.ref) ? ', ' + (d.main_reference_number || d.ref) : '') + ' · ');
+    const a = document.createElement('a'); a.href = pageOf(d); a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'Open on their site';
+    credit.appendChild(a); el.appendChild(credit);
+  }
+  function toggleLabel() {
+    const d = current(); if (!d) return;
+    if (label.hidden) { fillLabel(label, d); label.hidden = false; } else label.hidden = true;
+    $('infoBtn').setAttribute('aria-pressed', String(!label.hidden));
+  }
+
+  // ---------- filters ----------
+  function syncFilters() { Object.keys(TYPES).forEach(k => $('t-' + k).setAttribute('aria-pressed', String(state.types.includes(k)))); }
+  function toggleType(k) {
+    const on = state.types.includes(k);
+    if (on && state.types.length === 1) return;
+    state.types = on ? state.types.filter(t => t !== k) : [...state.types, k];
+    save(); syncFilters();
+    log(`filters now: ${state.types.join(', ')}`);
+    restart();
+  }
+  // Start the stream afresh after a filter or museum change; what was already seen stays in history.
+  function restart() {
+    queue = []; rkIds = []; rkReady = []; rkGen++; rkPauseUntil = 0; strategy = 0; pageNo = 0; total = null; seed = Math.floor(Math.random() * 1e9);
+    history = history.slice(0, pos + 1);
+    next();
+  }
+  function syncMuseum() { ['aic', 'rijks', 'both'].forEach(m => $('m-' + m).setAttribute('aria-pressed', String(state.museum === m))); }
+  function setMuseum(m) {
+    if (state.museum === m) return;
+    state.museum = m; save(); syncMuseum();
+    log(`museum now: ${m}`);
+    restart();
+  }
+
+  // ---------- pile ----------
+  const pile = $('pile');
+  function renderPile() {
+    const grid = $('grid'); grid.textContent = '';
+    $('empty').hidden = state.kept.length > 0;
+    $('pileSub').textContent = state.kept.length === 1 ? '1 work' : state.kept.length + ' works';
+    state.kept.forEach(k => {
+      const card = document.createElement('article'); card.className = 'card';
+      const frame = document.createElement('div'); frame.className = 'frame'; frame.title = 'Look at this one again';
+      const img = document.createElement('img'); img.loading = 'lazy'; img.alt = k.title || 'Kept work';
+      setSrc(img, [full(k, 400), full(k, 200), native(k)]);
+      frame.appendChild(img);
+      frame.onclick = () => {
+        closePile();
+        const d = { id: k.id, image_id: k.image_id, title: k.title, artist_display: k.artist, date_display: k.date,
+          medium_display: k.medium, artwork_type_title: k.type, dimensions: k.dimensions, main_reference_number: k.ref,
+          thumbnail: k.w ? { width: k.w, height: k.h } : null, is_public_domain: true, src: k.src, iiif: k.iiif, link: k.link };
+        history = history.slice(0, pos + 1); history.push(d); pos = history.length - 1; render();
+      };
+      const artist = document.createElement('div'); artist.className = 'artist'; artist.textContent = (k.artist || 'Artist unknown').split('\n')[0];
+      const title = document.createElement('div'); title.className = 'title'; title.textContent = [k.title, k.date].filter(Boolean).join(', ');
+      const row = document.createElement('div'); row.className = 'row';
+      const a = document.createElement('a'); a.href = pageOf(k); a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'Their page';
+      const rm = document.createElement('button'); rm.textContent = 'Remove';
+      rm.onclick = () => { state.kept = state.kept.filter(x => x.id !== k.id); save(); updateCount(); renderPile(); };
+      row.append(a, rm);
+      card.append(frame, artist, title, row); grid.appendChild(card);
+    });
+  }
+  function openPile() { renderPile(); pile.hidden = false; $('pileClose').focus(); }
+  function closePile() { pile.hidden = true; }
+
+  $('exportBtn').onclick = () => {
+    const blob = new Blob([JSON.stringify({ stillroom: 1, savedAt: new Date().toISOString(), kept: state.kept }, null, 1)], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = 'stillroom-pile-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
+  $('importBtn').onclick = () => $('importFile').click();
+  $('importFile').onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const data = JSON.parse(await f.text());
+      const incoming = (data.kept || []).filter(k => k && k.id && k.image_id);
+      incoming.forEach(k => { if (!isKept(k.id)) state.kept.push(k); markSeen(k.id); });
+      save(); updateCount(); renderPile(); toast('Loaded ' + incoming.length);
+    } catch (err) { toast('That file isn’t a Stillroom pile'); }
+    e.target.value = '';
+  };
+
+  // ---------- intro: one line at a time ----------
+  // Each line waits for its moment, fades on its own, and retires once acted on or seen on 3 works.
+  const CUES = [
+    { k: 'next', html: '<kbd>→</kbd> for the next one' },
+    { k: 'keep', html: '<kbd>K</kbd> to keep one · it goes in your kept pile' },
+    { k: 'pile', onKeep: true },
+    { k: 'zoom', html: 'Scroll to go closer' },
+    { k: 'back', html: 'Drag to move · <kbd>Esc</kbd> for the whole work', onZoom: true },
+    { k: 'edges', html: 'Controls wait at the top and bottom edges · <kbd>?</kbd> for every key' }
+  ];
+  if (/[?&]intro\b/.test(location.search)) state.cues = {};
+  if (!state.cues) state.cues = state.hintedEdges ? { done: true } : {};
+  let cueT, cueShowT, cueNow = null, cueOnce = -1;
+  function cueSeen(k) { return state.cues.done || (state.cues[k] || 0) >= 3; }
+  function cueDid(k) {
+    if (state.cues.done || state.cues[k] === 9) return;
+    state.cues[k] = 9;
+    if (CUES.every(c => cueSeen(c.k))) state.cues.done = true;
+    save();
+    if (cueNow === k) cueHide();
+  }
+  function cueHide() { clearTimeout(cueT); $('cue').classList.remove('on'); cueNow = null; }
+  function cueShow(c) {
+    state.cues[c.k] = (state.cues[c.k] || 0) + 1; save();
+    cueNow = c.k; $('cue').innerHTML = c.html; $('cue').classList.add('on');
+    log(`  intro line: ${c.k}`);
+    clearTimeout(cueT); cueT = setTimeout(cueHide, 6000);
+  }
+  function cueOnWork() {
+    cueHide(); clearTimeout(cueShowT);
+    const c = CUES.find(c => !c.onZoom && !c.onKeep && !cueSeen(c.k));
+    if (!c) return;
+    const g = gen;
+    cueShowT = setTimeout(() => {
+      if (g !== gen || !pile.hidden || !$('hint').hidden || document.body.classList.contains('zoomed')) return;
+      cueShow(c);
+    }, 2500);
+  }
+  function cueOnZoom() {
+    const c = CUES.find(c => c.onZoom && !cueSeen(c.k));
+    if (c && cueOnce !== gen) { cueOnce = gen; clearTimeout(cueShowT); cueShow(c); }
+  }
+
+  // The first keep brings the top bar in for a moment, with the pile button lit, so you see where it went.
+  function cueShowPile() {
+    if (cueSeen('pile')) return;
+    cueDid('pile'); log('  intro: kept pile shown');
+    const b = document.body, btn = $('pileBtn');
+    b.classList.add('show-top'); btn.classList.add('glow');
+    setTimeout(() => btn.classList.remove('glow'), 2200);
+    setTimeout(() => b.classList.remove('show-top'), 2800);
+  }
+
+  // ---------- controls ----------
+  $('nextBtn').onclick = () => { cueDid('next'); next(); }; $('prevBtn').onclick = prev; $('keepBtn').onclick = toggleKeep;
+  $('infoBtn').onclick = toggleLabel; $('zoomOut').onclick = () => { cueDid('back'); goHome(); };
+  $('glideBtn').onclick = () => setGlide(!state.glide);
+  $('pileBtn').onclick = openPile; $('pileClose').onclick = closePile;
+  Object.keys(TYPES).forEach(k => { $('t-' + k).onclick = () => toggleType(k); });
+  ['aic', 'rijks', 'both'].forEach(m => { $('m-' + m).onclick = () => setMuseum(m); });
+  $('fsBtn').onclick = () => {
+    const p = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+    if (p && p.catch) p.catch(() => {});
+  };
+  $('hintClose').onclick = () => { $('hint').hidden = true; };
+  $('keysBtn').onclick = () => { $('hint').hidden = !$('hint').hidden; if (!$('hint').hidden) cueDid('edges'); };
+
+  document.addEventListener('keydown', e => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.target && e.target.tagName === 'INPUT') return;
+    if (!pile.hidden) { if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') closePile(); return; }
+    if (e.key === '?') { $('keysBtn').click(); return; }
+    if (!$('hint').hidden && (e.key === 'Enter' || e.key === 'Escape')) { $('hintClose').click(); return; }
+    switch (e.key) {
+      case 'ArrowRight': case ' ': e.preventDefault(); cueDid('next'); next(); break;
+      case 'ArrowLeft': prev(); break;
+      case 'k': case 'K': case 'ArrowUp': e.preventDefault(); toggleKeep(); break;
+      case 'i': case 'I': toggleLabel(); break;
+      case 'p': case 'P': openPile(); break;
+      case 'f': case 'F': $('fsBtn').click(); break;
+      case 'Escape': if (!label.hidden) toggleLabel(); else { cueDid('back'); goHome(); } break;
+      case '0': cueDid('back'); goHome(); break;
+      case 'g': case 'G': setGlide(!state.glide); break;
+      case 'h': case 'H': togglePinned(); break;
+      case 'd': case 'D': saveLog(); break;
+      case '=': case '+': zoomStep(1.5); break;
+      case '-': case '_': zoomStep(1 / 1.5); break;
+    }
+  });
+
+  // The cursor itself hides after a still moment; the controls only come in from the edges.
+  let idleT;
+  function wake() { document.body.classList.remove('idle'); clearTimeout(idleT); idleT = setTimeout(() => { if (pile.hidden && $('hint').hidden) document.body.classList.add('idle'); }, 2500); }
+  const EDGE_TOP = 80, EDGE_BOTTOM = 100;
+  const hideT = { top: 0, bottom: 0 };
+  function reveal(which, on) {
+    const cls = 'show-' + which, b = document.body;
+    clearTimeout(hideT[which]);
+    if (on) { b.classList.add(cls); cueDid('edges'); }
+    else if (b.classList.contains(cls)) hideT[which] = setTimeout(() => b.classList.remove(cls), 450);
+  }
+  document.addEventListener('mousemove', e => {
+    wake();
+    reveal('top', e.clientY < EDGE_TOP);
+    reveal('bottom', e.clientY > window.innerHeight - EDGE_BOTTOM);
+  }, { passive: true });
+  document.addEventListener('mousedown', wake, { passive: true });
+  document.documentElement.addEventListener('mouseleave', () => { reveal('top', false); reveal('bottom', false); });
+  document.addEventListener('touchstart', e => {
+    if (e.target.closest && e.target.closest('.chrome')) return;
+    reveal('top', true); reveal('bottom', true);
+    setTimeout(() => { reveal('top', false); reveal('bottom', false); }, 3000);
+  }, { passive: true });
+  function togglePinned() { state.pinned = !document.body.classList.contains('pinned'); document.body.classList.toggle('pinned', state.pinned); save(); }
+  document.body.classList.toggle('pinned', !!state.pinned);
+
+  syncFilters(); syncMuseum(); updateCount(); wake(); setGlide(state.glide);
+  next();
+})();
+</script>
+</body>
+</html>
